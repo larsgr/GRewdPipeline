@@ -1,8 +1,10 @@
 # This script generates the job scripts for the entire pipeline
 
-outDir <- "/mnt/NOBACKUP/mariansc/share"
+pipelineOutDir <- "/mnt/NOBACKUP/mariansc/share"
 
 species <- c( "NaSt1", "NaSt2", "MeNu", "HoVu", "StLa", "BrDi" )
+
+readFilesTbl <- read.csv("indata/raw_read_sheet.csv")
 
 # how to move the old files into the pipeline?
 
@@ -18,7 +20,11 @@ species <- c( "NaSt1", "NaSt2", "MeNu", "HoVu", "StLa", "BrDi" )
 #     input: Raw reads
 #     output: trimmed reads
 
+source("processes/trimmo/createTrimmoJob.R")
 
+createTrimmoJob(readFileFolders = readFilesTbl$PATH, outNames = readFilesTbl$sampleID,
+                outDir = file.path(pipelineOutDir,"trimmo"), jobArraySize = 10, 
+                adapterFile = "indata/TruSeq3-PE-2.fa")
 
 
 ###
