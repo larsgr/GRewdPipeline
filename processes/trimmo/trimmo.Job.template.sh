@@ -8,7 +8,7 @@ arraysize=${arraysize}
 numberOfSamples=$(cat $samplelist | wc -l)
 
 
-for i in $(seq 0 $arraysize $numberOfSamples);
+for i in $(seq 1 $arraysize $numberOfSamples);
 do
   echo "i = $i"
   ID=$(echo $SLURM_ARRAY_TASK_ID-1+$i | bc)

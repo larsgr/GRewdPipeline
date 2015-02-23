@@ -6,7 +6,7 @@ createTrimmoJob <- function( readFileFolders, outNames, outDir, jobArraySize, ad
   dir.create(outDir) # create output directory
   dir.create(file.path(outDir,"fastqc_output"))
   
-  write.table( data.frame(outNames,readFileFolders, rep(".",length(readFileFolders))),
+  write.table( data.frame(outNames,readFileFolders)),
                file = file.path(outDir,"sampleList.txt"),
                sep=" ", col.names=F, row.names=F, quote=F)
   
