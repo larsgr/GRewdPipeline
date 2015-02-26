@@ -10,8 +10,8 @@ createTrimmoJob <- function( readFileFolders, outNames, outDir, jobArraySize, ad
                file = file.path(outDir,"sampleList.txt"),
                sep=" ", col.names=F, row.names=F, quote=F)
   
-  file.copy("processes/trimmo/RUNtrimmo.sh", outDir)
-  file.copy(adapterFile, outDir)
+  file.copy("processes/trimmo/RUNtrimmo.sh", outDir, copy.mode=F)
+  file.copy(adapterFile, outDir, copy.mode=F)
   
   script = fillTemplateFile( list(samplelist="sampleList.txt",arraysize=jobArraySize),
                             templateFile = "processes/trimmo/trimmo.Job.template.sh")
