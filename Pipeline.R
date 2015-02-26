@@ -29,6 +29,9 @@ createTrimmoJob(readFileFolders = readFilesTbl$PATH, outNames = readFilesTbl$sam
                 outDir = file.path(pipelineOutDir,"trimmo"), jobArraySize = 10, 
                 adapterFile = "indata/TruSeq3-PE-2.fa")
 
+# add the trimmed reads to the readFilesTbl
+readFilesTbl$trimmedLeft <- file.path(pipelineOutDir,"trimmo",paste0(readFilesTbl$sampleID,".R1.fq"))
+readFilesTbl$trimmedRight <- file.path(pipelineOutDir,"trimmo",paste0(readFilesTbl$sampleID,".R2.fq"))
 
 ###
 #
@@ -44,6 +47,13 @@ createTrimmoJob(readFileFolders = readFilesTbl$PATH, outNames = readFilesTbl$sam
 #   trinity - De-novo transcript assembly
 #     input: trimmed reads
 #     output: assembled transcript sequences
+
+
+
+createTrinityJob(leftReadFiles = readFilesTbl$trimmedLeft[grepl("BrDi",readFilesTbl$SPECIES)],
+                 rightReadFiles = readFilesTbl$trimmedRight[grepl("BrDi",readFilesTbl$SPECIES)],
+                 outDir=file.path(pipelineOutDir,"trinity_BrDi"), max_memory="400G", CPU=32)
+
 
 #   RSEM - read counts
 #     input: trimmed reads, assembled transcript sequences
