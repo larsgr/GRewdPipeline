@@ -49,11 +49,35 @@ readFilesTbl$trimmedRight <- file.path(pipelineOutDir,"trimmo",paste0(readFilesT
 #     output: assembled transcript sequences
 
 
+# assemblies:
+# BrDi 3 samples
+# HoVu 7 samples
+# MeNu1 16 samples
+# MeNu2 12 samples
+# (NaSt1+2+3) 17 samples
+# StLa 7 samples
+
+source("processes/trinity/createTrinityJob.R")
 
 createTrinityJob(leftReadFiles = readFilesTbl$trimmedLeft[grepl("BrDi",readFilesTbl$SPECIES)],
                  rightReadFiles = readFilesTbl$trimmedRight[grepl("BrDi",readFilesTbl$SPECIES)],
                  outDir=file.path(pipelineOutDir,"trinity_BrDi"), max_memory="400G", CPU=32)
 
+createTrinityJob(leftReadFiles = readFilesTbl$trimmedLeft[grepl("MeNu1",readFilesTbl$SPECIES)],
+                 rightReadFiles = readFilesTbl$trimmedRight[grepl("MeNu1",readFilesTbl$SPECIES)],
+                 outDir=file.path(pipelineOutDir,"trinity_MeNu1"), max_memory="400G", CPU=32)
+
+createTrinityJob(leftReadFiles = readFilesTbl$trimmedLeft[grepl("MeNu2",readFilesTbl$SPECIES)],
+                 rightReadFiles = readFilesTbl$trimmedRight[grepl("MeNu2",readFilesTbl$SPECIES)],
+                 outDir=file.path(pipelineOutDir,"trinity_MeNu2"), max_memory="400G", CPU=32)
+
+createTrinityJob(leftReadFiles = readFilesTbl$trimmedLeft[grepl("NaSt",readFilesTbl$SPECIES)],
+                 rightReadFiles = readFilesTbl$trimmedRight[grepl("NaSt",readFilesTbl$SPECIES)],
+                 outDir=file.path(pipelineOutDir,"trinity_NaSt"), max_memory="400G", CPU=32)
+
+createTrinityJob(leftReadFiles = readFilesTbl$trimmedLeft[grepl("StLa",readFilesTbl$SPECIES)],
+                 rightReadFiles = readFilesTbl$trimmedRight[grepl("StLa",readFilesTbl$SPECIES)],
+                 outDir=file.path(pipelineOutDir,"trinity_StLa"), max_memory="400G", CPU=32)
 
 #   RSEM - read counts
 #     input: trimmed reads, assembled transcript sequences
