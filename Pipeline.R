@@ -63,6 +63,10 @@ createTrinityJob(leftReadFiles = readFilesTbl$trimmedLeft[grepl("BrDi",readFiles
                  rightReadFiles = readFilesTbl$trimmedRight[grepl("BrDi",readFilesTbl$SPECIES)],
                  outDir=file.path(pipelineOutDir,"trinity_BrDi"), max_memory="400G", CPU=32)
 
+createTrinityJob(leftReadFiles = readFilesTbl$trimmedLeft[grepl("HoVu",readFilesTbl$SPECIES)],
+                 rightReadFiles = readFilesTbl$trimmedRight[grepl("HoVu",readFilesTbl$SPECIES)],
+                 outDir=file.path(pipelineOutDir,"trinity_HoVu"), max_memory="400G", CPU=32)
+
 createTrinityJob(leftReadFiles = readFilesTbl$trimmedLeft[grepl("MeNu1",readFilesTbl$SPECIES)],
                  rightReadFiles = readFilesTbl$trimmedRight[grepl("MeNu1",readFilesTbl$SPECIES)],
                  outDir=file.path(pipelineOutDir,"trinity_MeNu1"), max_memory="400G", CPU=32)
