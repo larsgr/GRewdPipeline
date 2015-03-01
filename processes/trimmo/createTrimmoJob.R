@@ -6,12 +6,12 @@ createTrimmoJob <- function( readFileFolders, outNames, outDir, jobArraySize, ad
   dir.create(outDir) # create output directory
   dir.create(file.path(outDir,"fastqc_output"))
   
-  write.table( data.frame(outNames,readFileFolders)),
+  write.table( data.frame(outNames,readFileFolders),
                file = file.path(outDir,"sampleList.txt"),
                sep=" ", col.names=F, row.names=F, quote=F)
   
-  file.copy("processes/trimmo/RUNtrimmo.sh", outDir)
-  file.copy(adapterFile, outDir)
+  file.copy("processes/trimmo/RUNtrimmo.sh", outDir, copy.mode=F)
+  file.copy(adapterFile, outDir, copy.mode=F)
   
   script = fillTemplateFile( list(samplelist="sampleList.txt",arraysize=jobArraySize),
                             templateFile = "processes/trimmo/trimmo.Job.template.sh")
