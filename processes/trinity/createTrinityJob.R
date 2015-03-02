@@ -26,7 +26,8 @@ createTrinityJob <- function( leftReadFiles, rightReadFiles, outDir,
                      "--left", paste(leftReadFiles,collapse=','),
                      "--right", paste(rightReadFiles,collapse=','),
                      "--CPU", CPU,
-                     "--max_memory", max_memory ) )
+                     "--max_memory", max_memory,
+                     "--full_cleanup" ))
   
   
   createSLURMscript(script = script,workdir = normalizePath(outDir),jobName = "trinity",
