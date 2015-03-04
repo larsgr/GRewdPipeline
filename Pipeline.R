@@ -4,7 +4,7 @@ pipelineOutDir <- "/mnt/NOBACKUP/mariansc/share"
 
 species <- c( "NaSt1", "NaSt2", "MeNu", "HoVu", "StLa", "BrDi" )
 
-readFilesTbl <- read.csv("indata/raw_read_sheet.csv")
+readFilesTbl <- read.csv("indata/raw_read_sheet.csv", stringsAsFactors=F)
 
 # Set umask so that new files will have the group write access
 Sys.umask(mode="0002")
@@ -48,40 +48,40 @@ readFilesTbl$trimmedRight <- file.path(pipelineOutDir,"trimmo",paste0(readFilesT
 #     input: trimmed reads
 #     output: assembled transcript sequences
 
+# Which samples to include in each assembly:
 
-# assemblies:
-# BrDi 3 samples
+asmSamples <- list()
+
+# BrDi 3 samples (3 correct and 3 wrong)
+asmSamples$BrDi <- grepl("BrDi",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
+asmSamples$wc_BrDi <- grepl("BrDi",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
+
 # HoVu 7 samples
-# MeNu1 16 samples
+asmSamples$HoVu <- grepl("HoVu",readFilesTbl$SPECIES)
+
+# MeNu1 16 samples (16 correct and 16 wrong)
+asmSamples$MeNu1 <- grepl("MeNu1",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
+asmSamples$wc_MeNu1 <- grepl("MeNu1",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
+
 # MeNu2 12 samples
-# (NaSt1+2+3) 17 samples
-# StLa 7 samples
+asmSamples$MeNu2 <- grepl("MeNu2",readFilesTbl$SPECIES)
+
+# (NaSt1+2+3) 17 samples (just correct)
+asmSamples$NaSt <- grepl("NaSt",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
+
+# StLa 7 samples (just correct)
+asmSamples$StLa <- grepl("StLa",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
 
 source("processes/trinity/createTrinityJob.R")
 
-createTrinityJob(leftReadFiles = readFilesTbl$trimmedLeft[grepl("BrDi",readFilesTbl$SPECIES)],
-                 rightReadFiles = readFilesTbl$trimmedRight[grepl("BrDi",readFilesTbl$SPECIES)],
-                 outDir=file.path(pipelineOutDir,"trinity_BrDi"), max_memory="400G", CPU=32)
+for(assemblyName in names(asmSamples)){
+  createTrinityJob(leftReadFiles = readFilesTbl$trimmedLeft[asmSamples[[assemblyName]]],
+                   rightReadFiles = readFilesTbl$trimmedRight[asmSamples[[assemblyName]]],
+                   outDir=file.path(pipelineOutDir,paste0("trinity_",assemblyName)),
+                   trinityOutputName=paste0(assemblyName,".fasta"),
+                   max_memory="400G", CPU=32)
+}
 
-createTrinityJob(leftReadFiles = readFilesTbl$trimmedLeft[grepl("HoVu",readFilesTbl$SPECIES)],
-                 rightReadFiles = readFilesTbl$trimmedRight[grepl("HoVu",readFilesTbl$SPECIES)],
-                 outDir=file.path(pipelineOutDir,"trinity_HoVu"), max_memory="400G", CPU=32)
-
-createTrinityJob(leftReadFiles = readFilesTbl$trimmedLeft[grepl("MeNu1",readFilesTbl$SPECIES)],
-                 rightReadFiles = readFilesTbl$trimmedRight[grepl("MeNu1",readFilesTbl$SPECIES)],
-                 outDir=file.path(pipelineOutDir,"trinity_MeNu1"), max_memory="400G", CPU=32)
-
-createTrinityJob(leftReadFiles = readFilesTbl$trimmedLeft[grepl("MeNu2",readFilesTbl$SPECIES)],
-                 rightReadFiles = readFilesTbl$trimmedRight[grepl("MeNu2",readFilesTbl$SPECIES)],
-                 outDir=file.path(pipelineOutDir,"trinity_MeNu2"), max_memory="400G", CPU=32)
-
-createTrinityJob(leftReadFiles = readFilesTbl$trimmedLeft[grepl("NaSt",readFilesTbl$SPECIES)],
-                 rightReadFiles = readFilesTbl$trimmedRight[grepl("NaSt",readFilesTbl$SPECIES)],
-                 outDir=file.path(pipelineOutDir,"trinity_NaSt"), max_memory="400G", CPU=32)
-
-createTrinityJob(leftReadFiles = readFilesTbl$trimmedLeft[grepl("StLa",readFilesTbl$SPECIES)],
-                 rightReadFiles = readFilesTbl$trimmedRight[grepl("StLa",readFilesTbl$SPECIES)],
-                 outDir=file.path(pipelineOutDir,"trinity_StLa"), max_memory="400G", CPU=32)
 
 #   RSEM - read counts
 #     input: trimmed reads, assembled transcript sequences
