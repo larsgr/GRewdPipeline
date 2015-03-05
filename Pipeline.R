@@ -87,6 +87,40 @@ for(assemblyName in names(asmSamples)){
 #     input: trimmed reads, assembled transcript sequences
 #     output: read counts (genes/isoforms)
 
+source("processes/RSEM/createRSEMJob.R")
+
+
+# Put all read count jobs in sub-folders of RSEM
+RSEMOutDir <- file.path(pipelineOutDir,"RSEM")
+dir.create(RSEMOutDir)
+
+# create RSEM job for HoVu samples
+assemblyName="HoVu"
+idx <- grepl("HoVu",readFilesTbl$SPECIES)
+createRSEMJob( outDir = file.path(RSEMOutDir,assemblyName),
+               transcriptsFile = file.path(pipelineOutDir,
+                                           paste0("trinity_",assemblyName),
+                                           paste0(assemblyName,".fasta")),
+               leftReadFiles = readFilesTbl$trimmedLeft[idx],
+               rightReadFiles = readFilesTbl$trimmedRight[idx],
+               outputPrefixes = readFilesTbl$sampleID[idx],
+               jobName = paste0(assemblyName,"RSEM"),
+               CPU=4, arraySize=4)
+
+# create RSEM job for MeNu2 samples
+assemblyName="MeNu2"
+idx <- grepl("MeNu2",readFilesTbl$SPECIES)
+createRSEMJob( outDir = file.path(RSEMOutDir,assemblyName),
+               transcriptsFile = file.path(pipelineOutDir,
+                                           paste0("trinity_",assemblyName),
+                                           paste0(assemblyName,".fasta")),
+               leftReadFiles = readFilesTbl$trimmedLeft[idx],
+               rightReadFiles = readFilesTbl$trimmedRight[idx],
+               outputPrefixes = readFilesTbl$sampleID[idx],
+               jobName = paste0(assemblyName,"RSEM"),
+               CPU=4, arraySize=4)
+
+
 #   transDecoder - ORF finding
 #     input: assembled transcript sequences
 #     output: ORF sequences (pep/nucleotides)
