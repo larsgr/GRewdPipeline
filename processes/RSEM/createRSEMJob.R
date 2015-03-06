@@ -2,7 +2,7 @@ source("processes/SLURMscript/createSLURMscript.R")
 
 createRSEMJob <- function( outDir, leftReadFiles, rightReadFiles, outputPrefixes, 
                            transcriptsFile, jobName = "RSEM", CPU=10, arraySize=1,
-                           prepCPU=CPU, seqType="fq", SS_lib_type="RF"){
+                           prepCPU=1, seqType="fq", SS_lib_type="RF"){
   # stop if outDir already exists
   if(file.exists(outDir)){
     stop(paste0("Could not create job because directory ",outDir," already exists!"))
