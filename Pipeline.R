@@ -121,6 +121,19 @@ createRSEMJob( outDir = file.path(RSEMOutDir,assemblyName),
                CPU=4, arraySize=4)
 
 
+# create RSEM job for MeNu1 samples
+assemblyName="MeNu1"
+idx <- grepl("MeNu1",readFilesTbl$SPECIES)
+createRSEMJob( outDir = file.path(RSEMOutDir,assemblyName),
+               transcriptsFile = file.path(pipelineOutDir,
+                                           paste0("trinity_",assemblyName),
+                                           paste0(assemblyName,".fasta")),
+               leftReadFiles = readFilesTbl$trimmedLeft[idx],
+               rightReadFiles = readFilesTbl$trimmedRight[idx],
+               outputPrefixes = readFilesTbl$sampleID[idx],
+               jobName = paste0(assemblyName,"RSEM"),
+               CPU=4, arraySize=8)
+
 #   transDecoder - ORF finding
 #     input: assembled transcript sequences
 #     output: ORF sequences (pep/nucleotides)
