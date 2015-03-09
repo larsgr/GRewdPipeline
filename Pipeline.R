@@ -72,13 +72,23 @@ asmSamples$NaSt <- grepl("NaSt",readFilesTbl$SPECIES) & readFilesTbl$chemistry =
 # StLa 7 samples (just correct)
 asmSamples$StLa <- grepl("StLa",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
 
+
+# define output files
+lapply( setNames(names(asmSamples), names(asmSamples)),function(assemblyName){
+  file.path(pipelineOutDir,
+            paste0("trinity_",assemblyName),
+            paste0(assemblyName,".fasta"))
+}) -> trinityOutput
+                                                         
+
 source("processes/trinity/createTrinityJob.R")
+
 
 for(assemblyName in names(asmSamples)){
   createTrinityJob(leftReadFiles = readFilesTbl$trimmedLeft[asmSamples[[assemblyName]]],
                    rightReadFiles = readFilesTbl$trimmedRight[asmSamples[[assemblyName]]],
-                   outDir=file.path(pipelineOutDir,paste0("trinity_",assemblyName)),
-                   trinityOutputName=paste0(assemblyName,".fasta"),
+                   outDir=dirname(trinityOutput[[assemblyName]]),
+                   trinityOutputName=basename(trinityOutput[[assemblyName]]),
                    max_memory="400G", CPU=32)
 }
 
@@ -94,49 +104,43 @@ source("processes/RSEM/createRSEMJob.R")
 RSEMOutDir <- file.path(pipelineOutDir,"RSEM")
 dir.create(RSEMOutDir)
 
+
+# Define which samples to map to which assembly
+RSEMsamplesIdx <- list()
+RSEMsamplesIdx$HoVu <- grepl("HoVu",readFilesTbl$SPECIES)
+RSEMsamplesIdx$MeNu1 <- grepl("MeNu1",readFilesTbl$SPECIES)
+RSEMsamplesIdx$MeNu2 <- grepl("MeNu2",readFilesTbl$SPECIES)
+RSEMsamplesIdx$BrDi <- grepl("BrDi",readFilesTbl$SPECIES)
+RSEMsamplesIdx$StLa <- grepl("StLa",readFilesTbl$SPECIES)
+
 # create RSEM job for HoVu samples
-assemblyName="HoVu"
-idx <- grepl("HoVu",readFilesTbl$SPECIES)
-createRSEMJob( outDir = file.path(RSEMOutDir,assemblyName),
-               transcriptsFile = file.path(pipelineOutDir,
-                                           paste0("trinity_",assemblyName),
-                                           paste0(assemblyName,".fasta")),
-               leftReadFiles = readFilesTbl$trimmedLeft[idx],
-               rightReadFiles = readFilesTbl$trimmedRight[idx],
-               outputPrefixes = readFilesTbl$sampleID[idx],
-               jobName = paste0(assemblyName,"RSEM"),
-               CPU=4, arraySize=4)
+for(assemblyName in names(RSEMsamplesIdx)){
+  idx <- RSEMsamplesIdx[[assemblyName]]
+  createRSEMJob( outDir = file.path(RSEMOutDir,assemblyName),
+                 transcriptsFile = trinityOutput[[assemblyName]],
+                 leftReadFiles = readFilesTbl$trimmedLeft[idx],
+                 rightReadFiles = readFilesTbl$trimmedRight[idx],
+                 outputPrefixes = readFilesTbl$sampleID[idx],
+                 jobName = paste0(assemblyName,"RSEM"),
+                 CPU=4, arraySize=4)  
+}
 
-# create RSEM job for MeNu2 samples
-assemblyName="MeNu2"
-idx <- grepl("MeNu2",readFilesTbl$SPECIES)
-createRSEMJob( outDir = file.path(RSEMOutDir,assemblyName),
-               transcriptsFile = file.path(pipelineOutDir,
-                                           paste0("trinity_",assemblyName),
-                                           paste0(assemblyName,".fasta")),
-               leftReadFiles = readFilesTbl$trimmedLeft[idx],
-               rightReadFiles = readFilesTbl$trimmedRight[idx],
-               outputPrefixes = readFilesTbl$sampleID[idx],
-               jobName = paste0(assemblyName,"RSEM"),
-               CPU=4, arraySize=4)
-
-
-# create RSEM job for MeNu1 samples
-assemblyName="MeNu1"
-idx <- grepl("MeNu1",readFilesTbl$SPECIES)
-createRSEMJob( outDir = file.path(RSEMOutDir,assemblyName),
-               transcriptsFile = file.path(pipelineOutDir,
-                                           paste0("trinity_",assemblyName),
-                                           paste0(assemblyName,".fasta")),
-               leftReadFiles = readFilesTbl$trimmedLeft[idx],
-               rightReadFiles = readFilesTbl$trimmedRight[idx],
-               outputPrefixes = readFilesTbl$sampleID[idx],
-               jobName = paste0(assemblyName,"RSEM"),
-               CPU=4, arraySize=8)
 
 #   transDecoder - ORF finding
 #     input: assembled transcript sequences
 #     output: ORF sequences (pep/nucleotides)
+
+
+transdecoderOutDir <- file.path(pipelineOutDir,"transdecoder")
+dir.create(transdecoderOutDir)
+
+source("processes/transdecoder/createTransdecoderJob.R")
+
+assemblyName="HoVu"
+createTransdecoderJob(outDir = file.path(transdecoderOutDir,assemblyName),
+                      transcriptsFile = trinityOutput[[assemblyName]],
+                      jobName = paste0(assemblyName,"TD"),
+                      CPU = 60)
 
 #   longestORF - Select the longest ORF from each gene
 #     input: ORF sequences (pep/nucleotides)
