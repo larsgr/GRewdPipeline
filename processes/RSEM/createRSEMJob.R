@@ -28,6 +28,7 @@ createRSEMJob <- function( outDir, leftReadFiles, rightReadFiles, outputPrefixes
   # load modules:  
   preScript <- paste( sep="\n",
                       "module load trinity",
+                      "module load bowtie",
                       "PATH=/mnt/users/lagr/bin/rsem-1.2.19:$PATH",
 #                       "module load rsem",
                       "module load samtools",
