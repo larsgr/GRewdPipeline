@@ -1,8 +1,8 @@
 source("processes/SLURMscript/createSLURMscript.R")
 
 createTransdecoderJob <- function( outDir, transcriptsFile,
-                              jobName = "transdecoder", strandSpecific=TRUE,
-                              minProtLength = 30,
+                              jobName = "transdecoder", strandSpecific = TRUE,
+                              minProtLength = 30, search_pfam = FALSE,
                               CPU=10){
   
   # stop if outDir already exists
@@ -21,7 +21,7 @@ createTransdecoderJob <- function( outDir, transcriptsFile,
                    paste(
                      "TransDecoder",
                      "-t", normalizePath(transcriptsFile),
-                     "--search_pfam", hmmFile,
+                     ifelse(search_pfam, paste("--search_pfam", hmmFile),""),
                      "-m", minProtLength,
                      ifelse(strandSpecific,"-S",""),
                      "--CPU", CPU
