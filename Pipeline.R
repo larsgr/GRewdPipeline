@@ -107,6 +107,7 @@ dir.create(RSEMOutDir)
 
 # Define which samples to map to which assembly
 RSEMsamplesIdx <- list()
+RSEMsamplesIdx$NaSt <- grepl("NaSt",readFilesTbl$SPECIES)
 RSEMsamplesIdx$HoVu <- grepl("HoVu",readFilesTbl$SPECIES)
 RSEMsamplesIdx$MeNu1 <- grepl("MeNu1",readFilesTbl$SPECIES)
 RSEMsamplesIdx$MeNu2 <- grepl("MeNu2",readFilesTbl$SPECIES)
@@ -136,16 +137,53 @@ dir.create(transdecoderOutDir)
 
 source("processes/transdecoder/createTransdecoderJob.R")
 
-assemblyName="HoVu"
-createTransdecoderJob(outDir = file.path(transdecoderOutDir,assemblyName),
-                      transcriptsFile = trinityOutput[[assemblyName]],
-                      jobName = paste0(assemblyName,"TD"),
-                      CPU = 60)
+for( assemblyName in c("NaSt","BrDi","MeNu1","MeNu2","StLa","HoVu")){
+  createTransdecoderJob(outDir = file.path(transdecoderOutDir,assemblyName),
+                        transcriptsFile = trinityOutput[[assemblyName]],
+                        jobName = paste0(assemblyName,"TD"),
+                        CPU = 1)
+}
 
 #   longestORF - Select the longest ORF from each gene
 #     input: ORF sequences (pep/nucleotides)
 #     output: longest ORF (pep/nucleotides)
 
+# create one directory to contain cross species ortholog related jobs
+
+orthoOutDir <- file.path(pipelineOutDir,"orthos")
+dir.create(orthoOutDir)
+
+source("processes/filterLongestORF/createFilterORFjob.R")
+
+transdecoderOutPepFiles <- sapply(c("NaSt","BrDi","MeNu1","MeNu2","StLa","HoVu"), function(x){
+  file.path(transdecoderOutDir,x,paste0(x,".fasta.transdecoder.pep"))
+})
+                  
+createFilterORFjob(outDir = file.path(orthoOutDir,"longestORFs"),
+                   ORFfiles = transdecoderOutPepFiles,
+                   outPrefix = names(transdecoderOutPepFiles))
+
+filterORFout <- file.path(orthoOutDir,"longestORFs",paste0(names(transdecoderOutPepFiles),".longest.fasta"))
+
+
+###############
+#
+# Download reference protein sequences for Barley and Brachypodium
+#
+# Note that the proteomes have only one representative sequence per gene.
+
+refGenDir <- file.path(pipelineOutDir,"refGenomes")
+refGenomes <- list(
+  Bd_R = file.path(refGenDir,"brachypodium_1.2_Protein_representative.fa"),
+  Hv_R = file.path(refGenDir,"barley_HighConf_genes_MIPS_23Mar12_ProteinSeq.fa")
+)
+
+
+# dir.create(refGenDir)
+# download.file("ftp://ftpmips.helmholtz-muenchen.de/plants/brachypodium/v1.2/brachypodium_1.2_Protein_representative.fa",
+#               destfile = refGenomes$Bd_R )
+# download.file("ftp://ftpmips.helmholtz-muenchen.de/plants/barley/public_data/genes/barley_HighConf_genes_MIPS_23Mar12_ProteinSeq.fa",
+#               destfile = refGenomes$Hv_R )
 
 
 ###
@@ -158,6 +196,12 @@ createTransdecoderJob(outDir = file.path(transdecoderOutDir,assemblyName),
 # orthoMCL - ortholog group finder
 #   input: longetsORF sequences (pep/nucleotides)
 
+source("processes/orthoMCL/createOrthoMCLjob.R")
+
+createOrthoMCLjob( outDir = file.path(orthoOutDir,"orthoMCL"),
+                   proteomeFiles = c(filterORFout,unlist(refGenomes)),
+                   taxon_codes = c(names(transdecoderOutPepFiles),names(refGenomes)),
+                   blastCPU=66)
 
 
 
