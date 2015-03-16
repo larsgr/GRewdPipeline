@@ -1,0 +1,141 @@
+---
+title: "orthoGroupStats"
+output: html_document
+---
+
+## Goal of analysis
+
+Show some basic stats of the predicted ortholog groups.
+
+```{r loadLibraries, echo=FALSE,message=FALSE}
+library(RColorBrewer)
+library(gplots)
+library(ape)
+
+source("~/networkSimilarity/R/loadOrthoGroups.R")
+```
+
+```{r loadData, echo=FALSE}
+grps <- loadOrthoGrpsArray(orthoGrpFile = "/mnt/NOBACKUP/mariansc/share/orthos/orthoMCL/groups.txt")
+
+# get number of genes per species per group
+lens <- unlist(lapply(grps,length))
+dim(lens) <- dim(grps)
+dimnames(lens) <- dimnames(grps)
+
+hasOrtho <- lens>0
+
+isRef <- grepl("_R",colnames(hasOrtho))
+```
+
+```{r plotDendro, echo=FALSE,eval=FALSE}
+# this is not very informative.. better to skip it
+
+notCommonGrps <- apply(lens,2, function(x){apply(lens,2, function(y,x){sum(xor(y>0, x>0))},x)})
+
+plot(hclust(as.dist(notCommonGrps)),xlab="distance = number of not shared groups")
+
+```
+
+### Orthologs found in all species
+
+There are `r sum(apply(lens==1,1,all))` ortholog groups that have exactly one ortholog in each species. 
+
+There are `r sum(apply(lens>0,1,all))` ortholog groups that have one or more ortholog in each species. 
+
+There are `r sum(apply(hasOrtho[,!isRef],1,all) & !apply(hasOrtho[,isRef],1,any))` ortholog groups that have one or more ortholog in each of the de-novo transcriptomes that is not in the reference trancriptomes.
+
+### Number of pairwise common groups
+Numbers are in thousands:
+```{r plotHeatmap, echo=FALSE}
+nCommonGrps <- apply(lens,2, function(x){apply(lens,2, function(y,x){sum(y>0 & x>0)},x)})
+
+heatmap.2(nCommonGrps,scale = "none", trace="none", key=F,
+          cellnote=signif(nCommonGrps/1000,3),notecol="black")
+
+```
+
+
+
+### Number of paralogs in ortholog groups
+
+```{r plotNparalogs, echo=FALSE}
+tbl <- table(lens)
+barplot(tbl[-1],xlab="Number of paralogs in group/species",ylab="groups/species")
+```
+
+### Species per group
+```{r plotSpcPerGrp, echo=FALSE}
+nSpcPerGrp <- apply(lens>0,1,sum)
+nSpcPerGrpTbl <- sapply(setNames(1:8,1:8),function(x){apply((lens>0)[nSpcPerGrp==x, ],2,sum)/x})
+cols <- brewer.pal(n = 8,name = "Set2")
+barplot(nSpcPerGrpTbl,col=cols,legend.text = colnames(lens),horiz = T,
+        ylab='Number of "species" represented',xlab="Ortho group")
+```
+
+### Clade specific groups
+
+Groups that are exclusive to a species or clade. Pink numbers show the groups that are represented at least once in each of the species under the branch but not in any other. Numbers on blue show the number of groups that are represented at least once in the branch but not in any other.
+
+```{r cladeSpecific, echo=FALSE}
+tree <- read.tree(text = "(((((Bd_R:1,BrDi:1):1,(Hv_R:1,HoVu:1):1):1,(MeNu1:1,MeNu2:1):2):1,StLa:4):1,NaSt:5):0;")
+
+
+getAllSubTips <- function(phylo,n){
+  if(n <= Ntip(phylo)){
+    return(phylo$tip.label[n])
+  } else {
+    subnodes <- phylo$edge[phylo$edge[,1]==n,2]    
+    return( c( Recall(phylo,subnodes[1]), Recall(phylo,subnodes[2])) )
+  }
+}
+
+# for each internal node:
+#   count orthogroups that exist exclusively in either:
+#     * All species in clade
+#     * At least once in each sub-clade
+
+
+ts <- Ntip(tree)
+
+sapply((1:Nnode(tree))+ts,function(i){
+  subnodes <- tree$edge[tree$edge[,1]==i,2]
+  idxIn1 <- getAllSubTips(tree,subnodes[1])
+  idxIn2 <- getAllSubTips(tree,subnodes[2])
+  idxOut <- !(colnames(lens) %in% c(idxIn1,idxIn2))
+  nInBoth <- sum( (rowSums(lens[ ,idxOut, drop=F])==0) & 
+                  ((rowSums(lens[ ,idxIn1, drop=F])>0) | 
+                  (rowSums(lens[ ,idxIn2, drop=F])>0)) )
+  nInAll <-  sum( (rowSums(lens[ ,idxOut, drop=F])==0) & 
+                  (rowSums(hasOrtho[ ,idxIn1, drop=F])==length(idxIn1)) & 
+                  (rowSums(hasOrtho[ ,idxIn2, drop=F])==length(idxIn2)) )  
+  return(c(nInBoth,nInAll))
+}) -> cladeSpecificGenes
+
+sapply(tree$tip.label,function(i){
+  sum( hasOrtho[ ,i] & rowSums(lens[ ,!(colnames(lens) %in% i)])==0)
+}) -> uniqueInSpecies
+
+plot(tree, show.node.label=F,x.lim=c(-1,6),y.lim=c(1,8.5))
+nodelabels(cladeSpecificGenes[1, ], adj = c(1, 1.2), frame = "r", bg="lightblue")
+nodelabels(cladeSpecificGenes[2, ], adj = c(1, -0.2), frame = "r", bg="pink")
+tiplabels(uniqueInSpecies,adj=c(1,0.5),frame="r",bg="pink")
+```
+
+### Filter groups using reference genomes
+
+The de-novo transcriptomes will lack some genes that are not expressed in the samples and will have have extra false genes (pseudo genes, missassembly, etc?). In the plot below I have attempted to filter groups to include only genes that is represented in one of the reference genomes and its corresponding de-novo transcriptome. ((BDa and brdi) or (BYa and hovu))
+
+```{r filterByRef, echo=FALSE}
+
+hasOrthoFilt <- hasOrtho[(hasOrtho[,"BrDi"] & hasOrtho[,"Bd_R"]) | (hasOrtho[,"HoVu"] & hasOrtho[,"Hv_R"]), ]
+nPairsFilt <- apply(hasOrthoFilt,2, function(x){
+  apply(hasOrthoFilt,2, function(y,x){
+    sum(y & x)
+  },x)
+})
+
+heatmap.2(nPairsFilt,scale = "none", trace="none", key=F,
+          cellnote=signif(nPairsFilt/1000,3),notecol="black")
+
+```
