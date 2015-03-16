@@ -2,14 +2,10 @@
 
 pipelineOutDir <- "/mnt/NOBACKUP/mariansc/share"
 
-species <- c( "NaSt1", "NaSt2", "MeNu", "HoVu", "StLa", "BrDi" )
-
 readFilesTbl <- read.csv("indata/raw_read_sheet.csv", stringsAsFactors=F)
 
 # Set umask so that new files will have the group write access
 Sys.umask(mode="0002")
-
-# how to move the old files into the pipeline?
 
 
 ###
@@ -126,6 +122,13 @@ for(assemblyName in names(RSEMsamplesIdx)){
                  CPU=4, arraySize=4)  
 }
 
+RSEMout <- list()
+for(assemblyName in names(RSEMsamplesIdx)){
+  idx <- RSEMsamplesIdx[[assemblyName]]
+  files <- file.path(RSEMOutDir,assemblyName,paste0(readFilesTbl$sampleID[idx],".genes.results"))
+  names(files) <- readFilesTbl$sampleID[idx]
+  RSEMout[[assemblyName]] <- files
+}
 
 #   transDecoder - ORF finding
 #     input: assembled transcript sequences
@@ -203,6 +206,17 @@ createOrthoMCLjob( outDir = file.path(orthoOutDir,"orthoMCL"),
                    taxon_codes = c(names(transdecoderOutPepFiles),names(refGenomes)),
                    blastCPU=66)
 
+orthoMCLout <- file.path(orthoOutDir,"orthoMCL","groups.txt")
+## TODO: blast only used 7% of CPU!! Should divide the blast job into parts and execute distributed
 
 
+# makeExprTables - Convert RSEM output files to more handy expression tables
+#   input: groups file from orthoMCL
+#          Expression counts files from RSEM
+#   output: Several tables
 
+source("processes/makeExprTables/createExprTablesJob.R")
+
+createExprTablesJob(outDir = file.path(orthoOutDir,"exprTbls"),
+                    orthoGrpFile=orthoMCLout,
+                    RSEMout=RSEMout)
