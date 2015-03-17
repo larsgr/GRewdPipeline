@@ -9,7 +9,7 @@ library(knitr)
 ```
 
 
-```{r loadData, echo=FALSE}
+```{r loadData, echo=FALSE, cache=TRUE}
 pipelineOutDir <- "/mnt/NOBACKUP/mariansc/share"
 grps <- loadOrthoGrpsArray(orthoGrpFile = file.path(pipelineOutDir,"orthos/orthoMCL/groups.txt"))
 
@@ -28,6 +28,10 @@ files <- dir(tblDir,pattern="_expected_countTbl.txt",full.names = T)
 exprCnt <- lapply(setNames(files,str_extract(basename(files),"^[^_]+")), 
                   read.table, stringsAsFactors = F)
 
+# remove WC samples, cast to matrix and log transform
+lapply(exprCnt, function(X){
+  log2( 1+as.matrix( X[ , !grepl("^wc_",names(X)) ] ) )
+}) -> expr
 
 # files <- dir(tblDir,pattern="_FPKMTbl.txt",full.names = T)
 # exprFPKM <- lapply(setNames(files,str_extract(basename(files),"^[^_]+")), 
@@ -64,7 +68,7 @@ grpsOfInterrest <- names(geneIDs2)
 # row.names(x) <- paste(names(geneIDs2),geneIDs2,sep=": ")
 # print(x)
 tmpTbl <- tbl
-tmpTbl$grp <- sprintf('[%s](#%s)',tbl$grp,tbl$grp)
+tmpTbl$grp <- sprintf('[%s](#%s)',tbl$grp,tbl$grp) # link to plot
 kable(tmpTbl)
 ```
 
@@ -100,7 +104,7 @@ kable(lens[unique(fructanGrp),])
 
 
 
-```{r plotGroupsOfInterres, echo=FALSE,fig.height=3,fig.width=12, results="asis"}
+```{r plotGroupsOfInterres, echo=FALSE,fig.height=2.5,fig.width=9, results="asis"}
 
 
 # grp = "grp101505"
@@ -108,35 +112,47 @@ kable(lens[unique(fructanGrp),])
 
 layout(matrix(c(1:6), 1, 6, byrow = T),
    widths=rep(2,6), heights=c(2.5))
-
+par(mar=c(5, 3, 4, 0))
 TtoX <- c(T0=1,T1=2,T3=3,T4=4)
 
 for(grp in grpsOfInterrest){
-  cat(sprintf('\n\n<a name="%s"/>\n',grp))
+  cat(sprintf('\n\n<a name="%s"/>\n',grp)) # link anchor
 
+  #
+  cat("<div>",grp,"</div>")
+  
+  # check if the group has any orthologs in out transcriptomes
+  if( sum(lens[grp,spcs]) == 0 ){
+    cat("No orthologs!")
+    next
+  }
+
+  # get same scale for all species
+  ylim <- range(unlist(lapply(spcs,function(spc){expr[[spc]][grps[[grp,spc]],]})))
+  
+  
   for(spc in spcs){
     genes <- grps[[grp,spc]]
     
-    if( length(genes) > 0){
-      expCnt <- log2(1+exprCnt[[spc]][genes,])
-      plot(x=NULL,xaxt="n",main=spc,xlab="",xlim=range(TtoX),ylim=range(expCnt),
-           ylab="log2(expCnt+1)")
-        axis(1,at=TtoX,labels=names(TtoX))  
-      timePoint = str_extract(colnames(expCnt),"T[0-4]")
-      cols <- rainbow(length(genes))
-      i=5
-      for( i in 1:length(genes) ) {
-        points(x=TtoX[timePoint],y=expCnt[i,], col=cols[i])
-        xMean <- tapply(as.numeric(expCnt[i,]),timePoint,mean)
-        lines(x=TtoX[names(xMean)],y=xMean, col=cols[i])
-      }
-    } else {
-      plot(x=0,type="n",xlab="",ylab="",xaxt="n",yaxt="n",main=spc)
+    expCnt <- expr[[spc]][genes, ,drop=FALSE]
+
+    plot(x=NULL,xaxt="n",main=spc,xlab="",xlim=range(TtoX),
+         ylim=ylim)
+    if(spc==spcs[1])title(ylab="log2(expCnt+1)",line=2)
+    axis(1,at=TtoX,labels=names(TtoX)) 
+    timePoint = str_extract(colnames(expCnt),"T[0-4]")
+    cols <- rainbow(length(genes))
+    for( i in seq_along(genes) ) {
+      points(x=TtoX[timePoint],y=expCnt[i,], col=cols[i])
+      xMean <- tapply(as.numeric(expCnt[i,]),timePoint,mean)
+      lines(x=TtoX[names(xMean)],y=xMean, col=cols[i])
     }
   }
 }
 
+# reset graphics parameters
 layout(1)
+par(mar=c(5, 4, 4, 2) + 0.1)
 
 ```
 
