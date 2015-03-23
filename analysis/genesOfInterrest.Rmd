@@ -1,0 +1,159 @@
+---
+title: "genesOfInterrest"
+output: html_document
+---
+```{r loadLibraries, echo =FALSE}
+library(stringr)
+source("/mnt/users/lagr/networkSimilarity/R/loadOrthoGroups.R")
+library(knitr)
+```
+
+
+```{r loadData, echo=FALSE, cache=TRUE}
+pipelineOutDir <- "/mnt/NOBACKUP/mariansc/share"
+grps <- loadOrthoGrpsArray(orthoGrpFile = file.path(pipelineOutDir,"orthos/orthoMCL/groups.txt"))
+
+tblDir <- file.path(pipelineOutDir,"orthos/exprTbls")
+
+# grp11Cnt <- read.table(file = file.path(tblDir,"grpSingletonCountTbl.txt"), 
+#                        stringsAsFactors = F)
+# grp11FPKM <- read.table(file = file.path(tblDir,"grpSingletonFPKMTbl.txt"), 
+#                        stringsAsFactors = F)
+# grpSumCnt <- read.table(file = file.path(tblDir,"grpSumCountTbl.txt"), 
+#                        stringsAsFactors = F)
+# grpSumFPKM <- read.table(file = file.path(tblDir,"grpSumFPKMTbl.txt"), 
+#                        stringsAsFactors = F)
+
+files <- dir(tblDir,pattern="_expected_countTbl.txt",full.names = T)
+exprCnt <- lapply(setNames(files,str_extract(basename(files),"^[^_]+")), 
+                  read.table, stringsAsFactors = F)
+
+# remove WC samples, cast to matrix and log transform
+lapply(exprCnt, function(X){
+  log2( 1+as.matrix( X[ , !grepl("^wc_",names(X)) ] ) )
+}) -> expr
+
+# files <- dir(tblDir,pattern="_FPKMTbl.txt",full.names = T)
+# exprFPKM <- lapply(setNames(files,str_extract(basename(files),"^[^_]+")), 
+#                   read.table, stringsAsFactors = F)
+
+spcs <- names(exprCnt)
+spcs <- setNames(spcs,spcs)
+
+# get number of genes per species per group
+lens <- unlist(lapply(grps,length))
+dim(lens) <- dim(grps)
+dimnames(lens) <- dimnames(grps)
+
+```
+
+
+
+```{r floweringGenes, echo=F, results="asis"}
+tbl <- read.table("/mnt/users/lagr/GRewd/inData/flowerGenes.txt",header=T,stringsAsFactors = F, sep="\t")
+
+geneIDs2 <- tbl$BdIDv1.2
+
+brdiFlat <- unlist(grps[,"Bd_R"])
+brdiGrpFlat <- rep(rownames(grps),lens[,"Bd_R"])
+
+tbl$grp <- brdiGrpFlat[match(tbl$BdIDv1.2,brdiFlat)]
+
+# geneIDplus <- paste(tbl$BdIDv1.2,ifelse(tbl$BdGene=="","",sprintf("(%s)",tbl$BdGene)))
+      
+geneIDs2 <- tapply(tbl$BdIDv1.2,tbl$grp,paste)
+grpsOfInterrest <- names(geneIDs2)
+
+# x <- lens[names(geneIDs2),]
+# row.names(x) <- paste(names(geneIDs2),geneIDs2,sep=": ")
+# print(x)
+tmpTbl <- tbl
+tmpTbl$grp <- sprintf('[%s](#%s)',tbl$grp,tbl$grp) # link to plot
+kable(tmpTbl)
+```
+
+```{r fructanGenes, echo=FALSE, results="asis", eval=FALSE}
+setwd("~/GRewd")
+tbl <- read.table("inData/fructansynthesis_genes.txt",header=T,stringsAsFactors = F,sep="\t")
+
+
+
+fructanGenes <- c("Bradi1g52210.1","Bradi2g61830.1","Bradi5g25270.1")
+fructanGenesAnnot <- c( Bradi1g52210.1 = "1-FFT",
+                        Bradi2g61830.1 = "1-FEHa",
+                        Bradi5g25270.1 = "6-FEH")
+
+
+brdiFlat <- unlist(grps[,"brdi"])
+brdiGrpFlat <- rep(rownames(grps),lens[,"brdi"])
+
+fructanGrp <- brdiGrpFlat[match(fructanGenes,brdiFlat)]
+
+geneIDs2 <- tapply(fructanGenes,fructanGrp,paste)
+
+grps2trees$grp100255 <-ape::read.tree(file = "pipelineData/trees/inAllSpcs/grp100255.fasta_GTR+G+I_BS100.tree")
+
+tbl$orthoGrp <- fructanGrp[match(tbl$BRDI_V1.2_REF,fructanGenes)]
+kable(tbl[,-4],row.names = F)
+```
+
+## Number of paralogs in ortholog groups
+```{r fructanGeneGrpSize, echo=FALSE, results="asis", eval=FALSE}
+kable(lens[unique(fructanGrp),])
+```
+
+
+
+```{r plotGroupsOfInterres, echo=FALSE,fig.height=2.5,fig.width=9, results="asis"}
+
+
+# grp = "grp101505"
+
+
+layout(matrix(c(1:6), 1, 6, byrow = T),
+   widths=rep(2,6), heights=c(2.5))
+par(mar=c(5, 3, 4, 0))
+TtoX <- c(T0=1,T1=2,T3=3,T4=4)
+
+for(grp in grpsOfInterrest){
+  cat(sprintf('\n\n<a name="%s"/>\n',grp)) # link anchor
+
+  #
+  cat("<div>",grp,"</div>")
+  
+  # check if the group has any orthologs in out transcriptomes
+  if( sum(lens[grp,spcs]) == 0 ){
+    cat("No orthologs!")
+    next
+  }
+
+  # get same scale for all species
+  ylim <- range(unlist(lapply(spcs,function(spc){expr[[spc]][grps[[grp,spc]],]})))
+  
+  
+  for(spc in spcs){
+    genes <- grps[[grp,spc]]
+    
+    expCnt <- expr[[spc]][genes, ,drop=FALSE]
+
+    plot(x=NULL,xaxt="n",main=spc,xlab="",xlim=range(TtoX),
+         ylim=ylim)
+    if(spc==spcs[1])title(ylab="log2(expCnt+1)",line=2)
+    axis(1,at=TtoX,labels=names(TtoX)) 
+    timePoint = str_extract(colnames(expCnt),"T[0-4]")
+    cols <- rainbow(length(genes))
+    for( i in seq_along(genes) ) {
+      points(x=TtoX[timePoint],y=expCnt[i,], col=cols[i])
+      xMean <- tapply(as.numeric(expCnt[i,]),timePoint,mean)
+      lines(x=TtoX[names(xMean)],y=xMean, col=cols[i])
+    }
+  }
+}
+
+# reset graphics parameters
+layout(1)
+par(mar=c(5, 4, 4, 2) + 0.1)
+
+```
+
+

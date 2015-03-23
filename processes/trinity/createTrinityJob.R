@@ -1,8 +1,14 @@
 source("R/fillTemplateFile.R")
 source("processes/SLURMscript/createSLURMscript.R")
 
-createTrinityJob <- function( leftReadFiles, rightReadFiles, outDir,
-                              seqType="fq", SS_lib_type="RF", CPU=10, max_memory="calculate"){
+createTrinityJob <- function( leftReadFiles, rightReadFiles, outDir, trinityOutputName,
+                              jobName = "trinity", seqType="fq", SS_lib_type="RF", 
+                              CPU=10, max_memory="calculate"){
+  
+  # stop if outDir already exists
+  if(file.exists(outDir)){
+    stop(paste0("Could not create job because directory ",outDir," already exists!"))
+  }
   
   dir.create(outDir) # create output directory
   
@@ -26,9 +32,23 @@ createTrinityJob <- function( leftReadFiles, rightReadFiles, outDir,
                      "--left", paste(leftReadFiles,collapse=','),
                      "--right", paste(rightReadFiles,collapse=','),
                      "--CPU", CPU,
-                     "--max_memory", max_memory ) )
+                     "--max_memory", max_memory,
+                     "--full_cleanup" ),
+                   "",
+                   paste0('
+if [ -f trinity_out_dir.Trinity.fasta ];
+then
+  echo "CMD: mv trinity_out_dir.Trinity.fasta ',trinityOutputName,'"
+  mv trinity_out_dir.Trinity.fasta ',trinityOutputName,'
+else
+  echo "Trinity assembly file does not exists. Check log for errors and try again"
+  echo "[$(date +"%Y-%m-%d %H:%M:%S")] Job finished with errors" >> trinity.$SLURM_JOB_ID.started
+  mv ',jobName,'.$SLURM_JOB_ID.started ',jobName,'.$SLURM_JOB_ID.failed
+  exit 1
+fi')
+                   )
   
   
-  createSLURMscript(script = script,workdir = normalizePath(outDir),jobName = "trinity",
+  createSLURMscript(script = script,workdir = normalizePath(outDir),jobName = jobName,
                     ntasks = CPU, partition="hugemem", mem=max_memory)
 }

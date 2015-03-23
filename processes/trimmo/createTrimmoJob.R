@@ -2,6 +2,11 @@ source("R/fillTemplateFile.R")
 source("processes/SLURMscript/createSLURMscript.R")
 
 createTrimmoJob <- function( readFileFolders, outNames, outDir, jobArraySize, adapterFile){
+
+  # stop if outDir already exists
+  if(file.exists(outDir)){
+    stop(paste0("Could not create job because directory ",outDir," already exists!"))
+  }
   
   dir.create(outDir) # create output directory
   dir.create(file.path(outDir,"fastqc_output"))
