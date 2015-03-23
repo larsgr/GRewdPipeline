@@ -6,6 +6,7 @@ species <- c( "NaSt1", "NaSt2", "MeNu", "HoVu", "StLa", "BrDi" )
 
 readFilesTbl <- read.csv("indata/raw_read_sheet.csv")
 
+
 # Set umask so that new files will have the group write access
 Sys.umask(mode="0002")
 
