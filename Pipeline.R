@@ -53,21 +53,24 @@ asmSamples <- list()
 asmSamples$BrDi <- grepl("BrDi",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
 asmSamples$wc_BrDi <- grepl("BrDi",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
 
-# HoVu 7 samples
-asmSamples$HoVu <- grepl("HoVu",readFilesTbl$SPECIES)
-
+# HoVu 10 samples (7 correct and 3 wrong)
+asmSamples$HoVu <- grepl("HoVu",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
+asmSamples$wc_HoVu <- grepl("HoVu",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
 # MeNu1 16 samples (16 correct and 16 wrong)
 asmSamples$MeNu1 <- grepl("MeNu1",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
 asmSamples$wc_MeNu1 <- grepl("MeNu1",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
 
-# MeNu2 12 samples
+# MeNu2 24 samples (12 correct and 12 wrong)
 asmSamples$MeNu2 <- grepl("MeNu2",readFilesTbl$SPECIES)
+asmSamples$wc_MeNu2 <- grepl("MeNu2",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
 
-# (NaSt1+2+3) 17 samples (just correct)
+# (NaSt1+2+3) 26 samples (17 correct and 9 wrong)
 asmSamples$NaSt <- grepl("NaSt",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
+asmSamples$wc_NaSt <- grepl("NaSt",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
 
-# StLa 7 samples (just correct)
+# StLa 10 samples (7 correct and 3 wrong)
 asmSamples$StLa <- grepl("StLa",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
+asmSamples$wc_StLa <- grepl("StLa",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
 
 
 # define output files
