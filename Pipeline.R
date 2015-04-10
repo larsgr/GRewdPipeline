@@ -61,7 +61,7 @@ asmSamples$MeNu1 <- grepl("MeNu1",readFilesTbl$SPECIES) & readFilesTbl$chemistry
 asmSamples$wc_MeNu1 <- grepl("MeNu1",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
 
 # MeNu2 24 samples (12 correct and 12 wrong)
-asmSamples$MeNu2 <- grepl("MeNu2",readFilesTbl$SPECIES)
+asmSamples$MeNu2 <- grepl("MeNu2",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
 asmSamples$wc_MeNu2 <- grepl("MeNu2",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
 
 # (NaSt1+2+3) 26 samples (17 correct and 9 wrong)
@@ -109,10 +109,12 @@ dir.create(RSEMOutDir)
 RSEMsamplesIdx <- list()
 RSEMsamplesIdx$NaSt <- grepl("NaSt",readFilesTbl$SPECIES)
 RSEMsamplesIdx$HoVu <- grepl("HoVu",readFilesTbl$SPECIES)
-RSEMsamplesIdx$MeNu1 <- grepl("MeNu1",readFilesTbl$SPECIES)
+RSEMsamplesIdx$MeNu1 <- grepl("MeNu1",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
 RSEMsamplesIdx$MeNu2 <- grepl("MeNu2",readFilesTbl$SPECIES)
 RSEMsamplesIdx$BrDi <- grepl("BrDi",readFilesTbl$SPECIES)
 RSEMsamplesIdx$StLa <- grepl("StLa",readFilesTbl$SPECIES)
+RSEMsamplesIdx$wc_MeNu2 <- grepl("MeNu2",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
+
 
 # create RSEM job for HoVu samples
 for(assemblyName in names(RSEMsamplesIdx)){
