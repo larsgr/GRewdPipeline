@@ -110,7 +110,7 @@ RSEMsamplesIdx <- list()
 RSEMsamplesIdx$NaSt <- grepl("NaSt",readFilesTbl$SPECIES)
 RSEMsamplesIdx$HoVu <- grepl("HoVu",readFilesTbl$SPECIES)
 RSEMsamplesIdx$MeNu1 <- grepl("MeNu1",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
-RSEMsamplesIdx$MeNu2 <- grepl("MeNu2",readFilesTbl$SPECIES)
+RSEMsamplesIdx$MeNu2 <- grepl("MeNu2",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
 RSEMsamplesIdx$BrDi <- grepl("BrDi",readFilesTbl$SPECIES)
 RSEMsamplesIdx$StLa <- grepl("StLa",readFilesTbl$SPECIES)
 RSEMsamplesIdx$wc_MeNu2 <- grepl("MeNu2",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
