@@ -49,22 +49,22 @@ readFilesTbl$trimmedRight <- file.path(pipelineOutDir,"trimmo",paste0(readFilesT
 
 asmSamples <- list()
 
-# BrDi 3 samples (3 correct and 3 wrong)
+# BrDi 7 samples (4 correct and 3 wrong)
 asmSamples$BrDi <- grepl("BrDi",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
 asmSamples$wc_BrDi <- grepl("BrDi",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
 
-# HoVu 10 samples (7 correct and 3 wrong)
+# HoVu 11 samples (8 correct and 3 wrong)
 asmSamples$HoVu <- grepl("HoVu",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
 asmSamples$wc_HoVu <- grepl("HoVu",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
-# MeNu1 16 samples (16 correct and 16 wrong)
+# MeNu1 37 samples (21 correct and 16 wrong)
 asmSamples$MeNu1 <- grepl("MeNu1",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
 asmSamples$wc_MeNu1 <- grepl("MeNu1",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
 
-# MeNu2 24 samples (12 correct and 12 wrong)
+# MeNu2 28 samples (16 correct and 12 wrong)
 asmSamples$MeNu2 <- grepl("MeNu2",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
 asmSamples$wc_MeNu2 <- grepl("MeNu2",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
 
-# (NaSt1+2+3) 26 samples (17 correct and 9 wrong)
+# (NaSt1+2+3) 27 samples (18 correct and 9 wrong)
 asmSamples$NaSt <- grepl("NaSt",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
 asmSamples$wc_NaSt <- grepl("NaSt",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
 
