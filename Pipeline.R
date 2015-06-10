@@ -187,12 +187,20 @@ refGenomes <- list(
   Hv_R = file.path(refGenDir,"barley_HighConf_genes_MIPS_23Mar12_ProteinSeq.fa")
 )
 
+refGenomesNucl <- list(
+  Bd_R = file.path(refGenDir,"brachypodium_1.2_CDS.fa"),
+  Hv_R = file.path(refGenDir,"barley_HighConf_genes_MIPS_23Mar12_CDSSeq.fa")
+)
 
 # dir.create(refGenDir)
 # download.file("ftp://ftpmips.helmholtz-muenchen.de/plants/brachypodium/v1.2/brachypodium_1.2_Protein_representative.fa",
 #               destfile = refGenomes$Bd_R )
 # download.file("ftp://ftpmips.helmholtz-muenchen.de/plants/barley/public_data/genes/barley_HighConf_genes_MIPS_23Mar12_ProteinSeq.fa",
 #               destfile = refGenomes$Hv_R )
+# download.file("ftp://ftpmips.helmholtz-muenchen.de/plants/brachypodium/v1.2/brachypodium_1.2_CDS.fa",
+#               destfile = refGenomesNucl$Bd_R )
+# download.file("ftp://ftpmips.helmholtz-muenchen.de/plants/barley/public_data/genes/barley_HighConf_genes_MIPS_23Mar12_CDSSeq.fa",
+#               destfile = refGenomesNucl$Hv_R )
 
 
 ###
