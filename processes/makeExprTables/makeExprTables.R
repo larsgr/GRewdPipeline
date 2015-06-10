@@ -68,6 +68,13 @@ for( spc in spcs ){
   isInGrps <- gene_ids %in% gene_ids_grps
   
   for( countType in countTypes){
+    # save the full expression table
+    countTblFull <- sapply(RSEMexpr[[spc]],function(X){X[[countType]]})
+    rownames(countTblFull) <- gene_ids
+    
+    myWriteTbl(countTblFull, file.path(outDir,paste0(spc,"_full_",countType,"Tbl.txt")) )
+    
+    # save the expression table for those genes that belong in ortholog groups
     countTbl <- sapply(RSEMexpr[[spc]],function(X){X[[countType]][isInGrps]})
     rownames(countTbl) <- gene_ids[isInGrps]
     
