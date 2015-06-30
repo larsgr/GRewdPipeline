@@ -208,10 +208,14 @@ refGenomesNucl <- list(
 # Cross species jobs:
 # ===================
 #
-# Jobs that
+
 
 # orthoMCL - ortholog group finder
 #   input: longetsORF sequences (pep/nucleotides)
+#  output: groups.txt (ortholog groups)
+#          allProteomes.fasta (combined sequences from all species)
+#          allProteomes.db* (blast database)
+#          all_vs_all.out (all vs all blast result)
 
 source("processes/orthoMCL/createOrthoMCLjob.R")
 
@@ -234,3 +238,43 @@ source("processes/makeExprTables/createExprTablesJob.R")
 createExprTablesJob(outDir = file.path(orthoOutDir,"exprTbls"),
                     orthoGrpFile=orthoMCLout,
                     RSEMout=RSEMout)
+
+
+###
+#
+# Generate phylegentic trees for each ortho grp
+# ==============================================
+#
+
+# 1. generate fasta files for each orthogroup
+
+source("processes/RJob/RJob.R")
+
+RJob( outDir = file.path(orthoOutDir,"grpFastas"),
+      data = list( orthoGrpFile = orthoMCLout, 
+                   inFasta = file.path(orthoOutDir,"orthoMCL","allProteomes.fasta")), 
+      FUN= function(){
+        source("/mnt/users/lagr/GRewd/pipeline/R/orthoGrpTools.R")
+        grps <- loadOrthoGrpsArray(orthoGrpFile = data$orthoGrpFile)
+        seqs <- seqinr::read.fasta(file = data$inFasta)
+        for( i in 1:nrow(grps)){
+          seqIDs <- grpToChar(grps[i,])
+          seqinr::write.fasta(seqs[seqIDs],names=seqIDs,
+                              file.out = paste0(rownames(grps)[i],".fasta"))
+        }
+     }) -> grpFastasJob
+
+
+generateScript(grpFastasJob)
+
+# 2. align each group ufing MAFFT
+
+source("processes/MAFFT/MAFFTJob.R")
+
+#
+MAFFTJob(outDir = file.path(orthoOutDir,"grpAligned"),
+         arraySize = 100,
+         inFastaDir = grpFastasJob$outDir 
+         ) -> myMAFFTJob
+
+generateScript(myMAFFTJob)

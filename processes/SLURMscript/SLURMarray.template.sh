@@ -31,7 +31,7 @@ do
   
   echo "[$(date +"%Y-%m-%d %H:%M:%S")] CMD $i: $CMD"
   
-  $CMD
+  echo $CMD | bash
   
   exitCode=$?
   if [ "$exitCode" = "0" ]; then
