@@ -265,7 +265,7 @@ RJob( outDir = file.path(orthoOutDir,"grpFastas"),
      }) -> grpFastasJob
 
 
-generateScript(grpFastasJob)
+# generateScript(grpFastasJob)
 
 # 2. align each group ufing MAFFT
 
@@ -277,4 +277,26 @@ MAFFTJob(outDir = file.path(orthoOutDir,"grpAligned"),
          inFastaDir = grpFastasJob$outDir 
          ) -> myMAFFTJob
 
-generateScript(myMAFFTJob)
+# generateScript(myMAFFTJob)
+
+
+# 3. Make trees using phangorn
+#
+# TODO: Figuring out which groups to use should be done as part of the job
+
+source("processes/ArrayR/ArrayRJob.R")
+
+source("/mnt/users/lagr/GRewd/pipeline/R/orthoGrpTools.R")
+grpTbl <- loadOrthoGrpsTable(orthoGrpFile = orthoMCLout)
+grpSizes <- table(grpTbl$grpID)
+# only use the groups with more than four sequences
+alnBigFaFiles <- file.path(myMAFFTJob$outDir,paste0(names(which(grpSizes>4)),".aln"))
+
+ArrayRJob(x = rev(alnBigFaFiles), outDir = file.path(orthoOutDir,"trees"),
+          jobName = "makeTree", arraySize = 100, 
+          FUN=function(alignedFastaFile){
+            source("/mnt/users/lagr/GRewd/pipeline/processes/phangorn/makeTree.R")
+            makeTree(alignedFastaFile = alignedFastaFile, outDir = ".")
+          }) -> makeTreeJob
+
+generateScript(makeTreeJob)
