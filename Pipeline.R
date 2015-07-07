@@ -300,3 +300,100 @@ ArrayRJob(x = rev(alnBigFaFiles), outDir = file.path(orthoOutDir,"trees"),
           }) -> makeTreeJob
 
 generateScript(makeTreeJob)
+
+#
+# Convert protein alignments to nucleotide alignments with Pal2Nal
+# 
+
+# Generate nucleotide fasta files for each ortholog group
+# Get corresponding nucleotide sequences by looking up in the tables
+# generated when selecting the longest ORF's
+
+
+RJob( outDir = file.path(orthoOutDir,"grpCDSFastas"),
+      data = list( orthoGrpFile = orthoMCLout, 
+                   cdsFastas = c(refGenomesNucl,transdecoderOutCdsFiles),
+                   filterORFtbl.out = 
+                     setNames(file.path(orthoOutDir,"longestORFs",
+                                        paste0(names(transdecoderOutPepFiles),".tbl")),
+                              names(transdecoderOutPepFiles)) ),
+      FUN = function(){
+        source("/mnt/users/lagr/GRewd/pipeline/R/orthoGrpTools.R")
+        # load ortholog groups
+        grps <- loadOrthoGrpsArray(orthoGrpFile = data$orthoGrpFile)
+        
+        # load sequence ID conversion table
+        lapply(data$filterORFtbl.out, function(tblFile) {
+          tmp <- readr::read_tsv(tblFile,col_names = c("seqID","cdsID"))
+          setNames(tmp$cdsID,tmp$seqID)
+        })  -> cdsID
+        
+        # load all input sequences
+        lapply(data$cdsFastas, function( faFile ) {
+          seqinr::read.fasta(faFile)
+        }) -> seqs
+        
+        # for each ortho group:
+        for( i in 1:nrow(grps)){
+          
+          fullSeqIDs <- grpToChar(grps[i,]) # names of the sequences
+          
+          if(length(fullSeqIDs)>4){ # only bother with groups of more than 4
+
+            outSeqs <- list() # list to be filled sequences
+            
+            # for each sequence in group:
+            for(fullSeqID in fullSeqIDs){
+              spc <- sub("\\|.*","",fullSeqID)
+              seqID <- sub(".*\\|","",fullSeqID)
+              if(spc %in% names(cdsID)){
+                outSeqs <- c(outSeqs,seqs[[spc]][ cdsID[[spc]][seqID] ])
+              } else {
+                outSeqs <- c(outSeqs,seqs[[spc]][ seqID ])
+              }
+            }
+            
+            # write sequences to file:
+            seqinr::write.fasta(outSeqs,names=fullSeqIDs,
+                                file.out = paste0(rownames(grps)[i],".cds"))
+          }
+        }
+      }) -> grpCDSFastasJob
+
+generateScript(grpCDSFastasJob)
+
+# for each alignment (with more than four sequences)
+ArrayRJob(x = rev(alnBigFaFiles), outDir = file.path(orthoOutDir,"pal2nal"),
+          jobName = "pal2nal", arraySize = 100,
+          commonData=list( grpCDSpath = grpCDSFastasJob$outDir),
+          FUN=function(alignedPepFile){
+            cdsFile <- file.path(commonData$grpCDSpath, 
+                                 sub("aln$","cds",basename(alignedPepFile)))
+            alignedCdsFile <- sub("aln$","cds.aln",basename(alignedPepFile))
+            system(paste(sep="\n",
+                         "module load pal2nal/14.0",
+                         "module load mafft/7.130",
+                         "",
+                         paste("pal2nal.pl",
+                               alignedPepFile,
+                               cdsFile,
+                               "-output fasta",
+                               ">", alignedCdsFile) ))
+          }) -> pal2nalJob
+
+generateScript(pal2nalJob)
+
+#
+# Generate trees for the nucleotie alignments
+#
+
+alnBigCdsFiles <- file.path(pal2nalJob$outDir,paste0(names(which(grpSizes>4)),".cds.aln"))
+
+ArrayRJob(x = rev(alnBigCdsFiles), outDir = file.path(orthoOutDir,"treesNuc"),
+          jobName = "nucTree", arraySize = 100, 
+          FUN=function(alignedFastaFile){
+            source("/mnt/users/lagr/GRewd/pipeline/processes/phangorn/makeTree.R")
+            makeTree(alignedFastaFile = alignedFastaFile, outDir = ".", type="DNA")
+          }) -> makeNucTreeJob
+
+generateScript(makeNucTreeJob)

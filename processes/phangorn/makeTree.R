@@ -6,14 +6,14 @@ makeTree <- function( alignedFastaFile,
                       outDir,
                       outFilePrefix = sub("\\.aln$","",basename(alignedFastaFile)),
                       model.test  = F,
-                      bootstrap = 100) {
+                      bootstrap = 100,
+                      type = "AA" ) { # Type of sequences ("DNA" or "AA")
 
   
-  
-  cat('\nReading in data...\n')
-  
-  aa.phylo = function(i=alignedFastaFile, model.test=TRUE){
-    dat = read.phyDat(i, type = "AA", format = 'fasta')
+  aa.phylo <- function(alignedFastaFile, model.test = F){
+    cat('\nReading in data...\n')
+    
+    dat = read.phyDat(alignedFastaFile, type = "AA", format = 'fasta')
     dm = dist.ml(dat, model="JTT")
     tree = NJ(dm)
     
@@ -43,11 +43,53 @@ makeTree <- function( alignedFastaFile,
     cat('\nModel:',model.desc[1], ', gamma.cat =',  k, 'prop. invariable sites=', inv, '\n\n')
     fitNJ = pml(tree, dat, model=model.desc[1], k=k, inv=inv)
     fit = optim.pml(fitNJ, optNni=TRUE, optInv=k>1, optGamma=inv>0)
-  
+    
+    return(fit)
+  }
+
+  dna.phylo <- function(alignedFastaFile, model.test = F){
+    cat('\nReading in data...\n')
+    
+    dat = read.phyDat(alignedFastaFile, type = "DNA", format = 'fasta')
+    dm = dist.ml(dat)
+    tree = NJ(dm)
+    
+    if(model.test){
+      cat('Starting model testing..\n')
+      mt <- modelTest(dat)
+      model.tag <<- mt$Model[which.min(mt$BIC)]
+      if(is.null(model.tag)) {
+        cat('WARNING: Error in model test!')
+        model.test <- F
+      } else {
+        cat('Using model:',model.tag)
+        
+        env = attr(mt, "env")
+        fitStart = eval(get(model.tag, env), env)
+        fit = optim.pml(fitStart, optNni=TRUE, optGamma=TRUE, optInv=TRUE,
+                        model=sub("\\+.*$","",model.tag))        
+      }
+    }
+    
+    if(!model.test) {
+      cat('\nUsing default GTR+G+I\n')
+      model.tag <<- 'GTR+G+I'
+      fitStart = pml(tree, dat, k=4, inv=.2)
+      fit = optim.pml(fitStart, TRUE, TRUE, TRUE, TRUE, TRUE)
+    }
+    
     return(fit)
   }
   
-  fit = aa.phylo(alignedFastaFile, model.test)
+  
+  if( type=="AA"){
+    fit <- aa.phylo(alignedFastaFile, model.test = F)
+  } else if( type=="DNA"){
+    fit <- dna.phylo(alignedFastaFile, model.test = F)    
+  } else {
+    stop("Unknown type parameter: ",type)
+  }
+  
   
   options(warn=1)
   
@@ -67,7 +109,6 @@ makeTree <- function( alignedFastaFile,
     file.out = file.path(outDir, paste0(outFilePrefix, '_', model.tag, '_BS', bootstrap , '.tree'))
     bs.tree <- plotBS(fit$tree, fit.bs)
   
-    print(bs.tree)
     cat('\nSaving results to', file.out, '\n')
     write.tree(bs.tree, file=file.out)
   }
