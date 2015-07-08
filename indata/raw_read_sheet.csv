@@ -123,3 +123,16 @@ PATH,SPECIES,TIMEPOINT,INDIVIDUAL,sampleID,chemistry
 /mnt/SeqData2/mariansc/150513_7001448.A.Project_Schubert-strandRNA3-2015-04-22/Sample_10-T0-BldR-3,MeNu2,T-1,BIdR-3,MeNu2.T-1.ind.2,correct
 /mnt/SeqData2/mariansc/150513_7001448.A.Project_Schubert-strandRNA3-2015-04-22/Sample_11-T0-BldR-4,MeNu2,T-1,BIdR-4,MeNu2.T-1.ind.3,correct
 /mnt/SeqData2/mariansc/150513_7001448.A.Project_Schubert-strandRNA3-2015-04-22/Sample_12-T0-BldR-5,MeNu2,T-1,BIdR-5,MeNu2.T-1.ind.4,correct
+,HoVu,T1,BYa-3,HoVu.T1.ind.1,correct
+,HoVu,T1,BYa-4,HoVu.T1.ind.2,correct
+,HoVu,T1,BYa-5,HoVu.T1.ind.3,correct
+,HoVu,T1,BYa-6,HoVu.T1.ind.4,correct
+,BrDi,T0,BDa-2,BrDi.T0.ind.1,correct
+,BrDi,T0,BDa-3,BrDi.T0.ind.2,correct
+,BrDi,T0,BDa-6,BrDi.T0.ind.3,correct
+,BrDi,T1,BDa2-3,BrDi.T1.ind.1,correct
+,BrDi,T1,BDa2-5,BrDi.T1.ind.2,correct
+,BrDi,T1,BDa2-6,BrDi.T1.ind.3,correct
+,BrDi,T3,BDa2-6,BrDi.T3.ind.1,correct
+,BrDi,T3,BDa2-8,BrDi.T3.ind.2,correct
+,BrDi,T3,BDa2-9,BrDi.T3.ind.3,correct
