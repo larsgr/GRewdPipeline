@@ -45,51 +45,26 @@ readFilesTbl$trimmedRight <- file.path(pipelineOutDir,"trimmo",paste0(readFilesT
 #     input: trimmed reads
 #     output: assembled transcript sequences
 
-# Which samples to include in each assembly:
-
-asmSamples <- list()
-
-# BrDi 7 samples (4 correct and 3 wrong)
-asmSamples$BrDi <- grepl("BrDi",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
-asmSamples$wc_BrDi <- grepl("BrDi",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
-
-# HoVu 11 samples (8 correct and 3 wrong)
-asmSamples$HoVu <- grepl("HoVu",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
-asmSamples$wc_HoVu <- grepl("HoVu",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
-# MeNu1 37 samples (21 correct and 16 wrong)
-asmSamples$MeNu1 <- grepl("MeNu1",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
-asmSamples$wc_MeNu1 <- grepl("MeNu1",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
-
-# MeNu2 28 samples (16 correct and 12 wrong)
-asmSamples$MeNu2 <- grepl("MeNu2",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
-asmSamples$wc_MeNu2 <- grepl("MeNu2",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
-
-# (NaSt1+2+3) 27 samples (18 correct and 9 wrong)
-asmSamples$NaSt <- grepl("NaSt",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
-asmSamples$wc_NaSt <- grepl("NaSt",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
-
-# StLa 10 samples (7 correct and 3 wrong)
-asmSamples$StLa <- grepl("StLa",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
-asmSamples$wc_StLa <- grepl("StLa",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
-
 
 # define output files
 lapply( setNames(names(asmSamples), names(asmSamples)),function(assemblyName){
-  file.path(pipelineOutDir,
-            paste0("trinity_",assemblyName),
-            paste0(assemblyName,".fasta"))
+  file.path(pipelineOutDir,"trinity", assemblyName, paste0(assemblyName,".fasta"))
 }) -> trinityOutput
                                                          
 
 source("processes/trinity/createTrinityJob.R")
 
+assemblies <- na.omit(unique(readFilesTbl$assembly))
 
-for(assemblyName in names(asmSamples)){
-  createTrinityJob(leftReadFiles = readFilesTbl$trimmedLeft[asmSamples[[assemblyName]]],
-                   rightReadFiles = readFilesTbl$trimmedRight[asmSamples[[assemblyName]]],
-                   outDir=dirname(trinityOutput[[assemblyName]]),
-                   trinityOutputName=basename(trinityOutput[[assemblyName]]),
-                   max_memory="400G", CPU=32)
+trinityOutput <- list()
+for(assemblyName in assemblies){
+  trinityOutput[[assemblyName]] <- file.path(pipelineOutDir,"trinity", assemblyName, paste0(assemblyName,".fasta"))
+  try( createTrinityJob(
+         leftReadFiles = readFilesTbl$trimmedLeft[ readFilesTbl$assembly %in% assemblyName ],
+         rightReadFiles = readFilesTbl$trimmedRight[ readFilesTbl$assembly %in% assemblyName ],
+         outDir=dirname(trinityOutput[[assemblyName]]),
+         trinityOutputName=basename(trinityOutput[[assemblyName]]),
+         max_memory="400G", CPU=32 ) )
 }
 
 
@@ -105,36 +80,25 @@ RSEMOutDir <- file.path(pipelineOutDir,"RSEM")
 dir.create(RSEMOutDir)
 
 
-# Define which samples to map to which assembly
-RSEMsamplesIdx <- list()
-RSEMsamplesIdx$NaSt <- grepl("NaSt",readFilesTbl$SPECIES)
-RSEMsamplesIdx$HoVu <- grepl("HoVu",readFilesTbl$SPECIES)
-RSEMsamplesIdx$MeNu1 <- grepl("MeNu1",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
-RSEMsamplesIdx$MeNu2 <- grepl("MeNu2",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "correct"
-RSEMsamplesIdx$BrDi <- grepl("BrDi",readFilesTbl$SPECIES)
-RSEMsamplesIdx$StLa <- grepl("StLa",readFilesTbl$SPECIES)
-RSEMsamplesIdx$wc_MeNu2 <- grepl("MeNu2",readFilesTbl$SPECIES) & readFilesTbl$chemistry == "wrong"
+# create RSEM jobs for each assembly
+RSEMout <- list()
+for(assemblyName in assemblies){
+  idx <- readFilesTbl$assembly %in% assemblyName
 
-
-# create RSEM job for HoVu samples
-for(assemblyName in names(RSEMsamplesIdx)){
-  idx <- RSEMsamplesIdx[[assemblyName]]
-  createRSEMJob( outDir = file.path(RSEMOutDir,assemblyName),
+  files <- file.path(RSEMOutDir,assemblyName,paste0(readFilesTbl$sampleID[idx],".genes.results"))
+  names(files) <- readFilesTbl$sampleID[idx]
+  RSEMout[[assemblyName]] <- files
+  
+  try(
+    createRSEMJob( outDir = file.path(RSEMOutDir,assemblyName),
                  transcriptsFile = trinityOutput[[assemblyName]],
                  leftReadFiles = readFilesTbl$trimmedLeft[idx],
                  rightReadFiles = readFilesTbl$trimmedRight[idx],
                  outputPrefixes = readFilesTbl$sampleID[idx],
                  jobName = paste0(assemblyName,"RSEM"),
-                 CPU=4, arraySize=4)  
+                 CPU=4, arraySize=4) )
 }
 
-RSEMout <- list()
-for(assemblyName in names(RSEMsamplesIdx)){
-  idx <- RSEMsamplesIdx[[assemblyName]]
-  files <- file.path(RSEMOutDir,assemblyName,paste0(readFilesTbl$sampleID[idx],".genes.results"))
-  names(files) <- readFilesTbl$sampleID[idx]
-  RSEMout[[assemblyName]] <- files
-}
 
 #   transDecoder - ORF finding
 #     input: assembled transcript sequences
@@ -146,7 +110,7 @@ dir.create(transdecoderOutDir)
 
 source("processes/transdecoder/createTransdecoderJob.R")
 
-for( assemblyName in c("NaSt","BrDi","MeNu1","MeNu2","StLa","HoVu")){
+for( assemblyName in assemblies){
   createTransdecoderJob(outDir = file.path(transdecoderOutDir,assemblyName),
                         transcriptsFile = trinityOutput[[assemblyName]],
                         jobName = paste0(assemblyName,"TD"),
@@ -202,6 +166,33 @@ refGenomesNucl <- list(
 # download.file("ftp://ftpmips.helmholtz-muenchen.de/plants/barley/public_data/genes/barley_HighConf_genes_MIPS_23Mar12_CDSSeq.fa",
 #               destfile = refGenomesNucl$Hv_R )
 
+#
+# Download outgroup reference species
+#
+
+outGroupGenomes <- list(
+  Zm_R = file.path(refGenDir,"ZmB73_5a_WGS_translations.fasta"),
+  Sb_R = file.path(refGenDir,"sorghum1.4Proteins.fa"),
+  Os_R = file.path(refGenDir,"rap2Protein.fa")
+)
+
+outGroupGenomesNucl <- list(
+  Zm_R = file.path(refGenDir,"ZmB73_5a_WGS_cds.fasta"),
+  Sb_R = file.path(refGenDir,"sorghum1.4CDS.fa"),
+  Os_R = file.path(refGenDir,"rap2BestGuessCds.fa")
+)
+
+# NOTE: Zm transcripts ID's differ for peptide ID's  (_T/_FGT instead of _P/_FGP)
+
+# Dowloaded files:
+# ftp://ftpmips.helmholtz-muenchen.de/plants/sorghum/sorghum1.4Proteins.fa
+# ftp://ftpmips.helmholtz-muenchen.de/plants/sorghum/sorghum1.4CDS.fa
+# ftp://ftp.maizesequence.org/pub/maize/release-5b/working-set/ZmB73_5a_WGS_cds.fasta.gz
+# ftp://ftp.maizesequence.org/pub/maize/release-5b/working-set/ZmB73_5a_WGS_translations.fasta.gz
+# ftp://ftpmips.helmholtz-muenchen.de/plants/rice/rap2BestGuessCds.fa
+# ftp://ftpmips.helmholtz-muenchen.de/plants/rice/rap2Protein.fa
+
+
 
 ###
 #
@@ -220,12 +211,13 @@ refGenomesNucl <- list(
 source("processes/orthoMCL/createOrthoMCLjob.R")
 
 createOrthoMCLjob( outDir = file.path(orthoOutDir,"orthoMCL"),
-                   proteomeFiles = c(filterORFout,unlist(refGenomes)),
-                   taxon_codes = c(names(transdecoderOutPepFiles),names(refGenomes)),
-                   blastCPU=66)
-
-orthoMCLout <- file.path(orthoOutDir,"orthoMCL","groups.txt")
-## TODO: blast only used 7% of CPU!! Should divide the blast job into parts and execute distributed
+                   proteomeFiles = c(filterORFout,
+                                     unlist(refGenomes),
+                                     unlist(outGroupGenomes)),
+                   taxon_codes = c(names(transdecoderOutPepFiles),
+                                   names(refGenomes),
+                                   names(outGroupGenomes)),
+                   blastCPU=2, blastArraySize=50)
 
 
 # makeExprTables - Convert RSEM output files to more handy expression tables
@@ -245,8 +237,16 @@ createExprTablesJob(outDir = file.path(orthoOutDir,"exprTbls"),
 # Generate phylegentic trees for each ortho grp
 # ==============================================
 #
+# 1. Generate fasta files for each orthogroup (peptides)
+# 2. Generate nucleotide fasta files for each ortholog group
+# 3. Align each group ufing MAFFT (peptides)
+# 4. Convert protein alignments to nucleotide alignments with Pal2Nal
+# 5. Generate trees for the nucleotide alignments
 
-# 1. generate fasta files for each orthogroup
+
+#
+# 1. generate fasta files for each orthogroup (peptides)
+#
 
 source("processes/RJob/RJob.R")
 
@@ -265,50 +265,15 @@ RJob( outDir = file.path(orthoOutDir,"grpFastas"),
      }) -> grpFastasJob
 
 
-# generateScript(grpFastasJob)
-
-# 2. align each group ufing MAFFT
-
-source("processes/MAFFT/MAFFTJob.R")
+generateScript(grpFastasJob)
 
 #
-MAFFTJob(outDir = file.path(orthoOutDir,"grpAligned"),
-         arraySize = 100,
-         inFastaDir = grpFastasJob$outDir 
-         ) -> myMAFFTJob
-
-# generateScript(myMAFFTJob)
-
-
-# 3. Make trees using phangorn
+# 2. Generate nucleotide fasta files for each ortholog group
 #
-# TODO: Figuring out which groups to use should be done as part of the job
 
-source("processes/ArrayR/ArrayRJob.R")
-
-source("/mnt/users/lagr/GRewd/pipeline/R/orthoGrpTools.R")
-grpTbl <- loadOrthoGrpsTable(orthoGrpFile = orthoMCLout)
-grpSizes <- table(grpTbl$grpID)
-# only use the groups with more than four sequences
-alnBigFaFiles <- file.path(myMAFFTJob$outDir,paste0(names(which(grpSizes>4)),".aln"))
-
-ArrayRJob(x = rev(alnBigFaFiles), outDir = file.path(orthoOutDir,"trees"),
-          jobName = "makeTree", arraySize = 100, 
-          FUN=function(alignedFastaFile){
-            source("/mnt/users/lagr/GRewd/pipeline/processes/phangorn/makeTree.R")
-            makeTree(alignedFastaFile = alignedFastaFile, outDir = ".")
-          }) -> makeTreeJob
-
-generateScript(makeTreeJob)
-
-#
-# Convert protein alignments to nucleotide alignments with Pal2Nal
-# 
-
-# Generate nucleotide fasta files for each ortholog group
+# TODO: include the outgroup species
 # Get corresponding nucleotide sequences by looking up in the tables
 # generated when selecting the longest ORF's
-
 
 RJob( outDir = file.path(orthoOutDir,"grpCDSFastas"),
       data = list( orthoGrpFile = orthoMCLout, 
@@ -339,7 +304,7 @@ RJob( outDir = file.path(orthoOutDir,"grpCDSFastas"),
           fullSeqIDs <- grpToChar(grps[i,]) # names of the sequences
           
           if(length(fullSeqIDs)>4){ # only bother with groups of more than 4
-
+            
             outSeqs <- list() # list to be filled sequences
             
             # for each sequence in group:
@@ -361,6 +326,27 @@ RJob( outDir = file.path(orthoOutDir,"grpCDSFastas"),
       }) -> grpCDSFastasJob
 
 generateScript(grpCDSFastasJob)
+
+#
+# 3. align each group ufing MAFFT (peptides)
+#
+
+source("processes/MAFFT/MAFFTJob.R")
+
+#
+MAFFTJob(outDir = file.path(orthoOutDir,"grpAligned"),
+         arraySize = 100,
+         inFastaDir = grpFastasJob$outDir 
+         ) -> myMAFFTJob
+
+# generateScript(myMAFFTJob)
+
+
+
+#
+# 4. Convert protein alignments to nucleotide alignments with Pal2Nal
+# 
+
 
 # for each alignment (with more than four sequences)
 ArrayRJob(x = rev(alnBigFaFiles), outDir = file.path(orthoOutDir,"pal2nal"),
@@ -384,9 +370,17 @@ ArrayRJob(x = rev(alnBigFaFiles), outDir = file.path(orthoOutDir,"pal2nal"),
 generateScript(pal2nalJob)
 
 #
-# Generate trees for the nucleotide alignments
+# 5. Generate trees for the nucleotide alignments
 #
 
+# TODO: Figuring out which groups to use should be done as part of the job
+
+source("processes/ArrayR/ArrayRJob.R")
+
+source("/mnt/users/lagr/GRewd/pipeline/R/orthoGrpTools.R")
+grpTbl <- loadOrthoGrpsTable(orthoGrpFile = orthoMCLout)
+grpSizes <- table(grpTbl$grpID)
+# only use the groups with more than four sequences
 alnBigCdsFiles <- file.path(pal2nalJob$outDir,paste0(names(which(grpSizes>4)),".cds.aln"))
 
 ArrayRJob(x = rev(alnBigCdsFiles), outDir = file.path(orthoOutDir,"treesNuc"),
@@ -399,77 +393,3 @@ ArrayRJob(x = rev(alnBigCdsFiles), outDir = file.path(orthoOutDir,"treesNuc"),
 generateScript(makeNucTreeJob)
 
 
-
-
-
-
-###
-#
-# Ortholog groups with out groups:
-# ===================
-#
-
-
-ortho2OutDir <- file.path(pipelineOutDir,"orthos2")
-dir.create(ortho2OutDir)
-
-###############
-#
-# Download reference protein sequences for Barley and Brachypodium
-#
-# Note that the proteomes have only one representative sequence per gene.
-
-
-outGroupGenomes <- list(
-  Zm_R = file.path(refGenDir,"ZmB73_5a_WGS_translations.fasta"),
-  Sb_R = file.path(refGenDir,"sorghum1.4Proteins.fa"),
-  Os_R = file.path(refGenDir,"rap2Protein.fa")
-)
-
-outGroupGenomesNucl <- list(
-  Zm_R = file.path(refGenDir,"ZmB73_5a_WGS_cds.fasta"),
-  Sb_R = file.path(refGenDir,"sorghum1.4CDS.fa"),
-  Os_R = file.path(refGenDir,"rap2BestGuessCds.fa")
-)
-
-# NOTE: Zm transcripts ID's differ for peptide ID's  (_T/_FGT instead of _P/_FGP)
-
-# Dowloaded files:
-# ftp://ftpmips.helmholtz-muenchen.de/plants/sorghum/sorghum1.4Proteins.fa
-# ftp://ftpmips.helmholtz-muenchen.de/plants/sorghum/sorghum1.4CDS.fa
-# ftp://ftp.maizesequence.org/pub/maize/release-5b/working-set/ZmB73_5a_WGS_cds.fasta.gz
-# ftp://ftp.maizesequence.org/pub/maize/release-5b/working-set/ZmB73_5a_WGS_translations.fasta.gz
-# ftp://ftpmips.helmholtz-muenchen.de/plants/rice/rap2BestGuessCds.fa
-# ftp://ftpmips.helmholtz-muenchen.de/plants/rice/rap2Protein.fa
-
-
-
-
-# orthoMCL - ortholog group finder
-#   input: longetsORF sequences + reference genomes (peptide sequences)
-#  output: groups.txt (ortholog groups)
-#          allProteomes.fasta (combined sequences from all species)
-#          allProteomes.db* (blast database)
-#          all_vs_all.out (all vs all blast result)
-
-source("processes/orthoMCL/createOrthoMCLjob.R")
-
-createOrthoMCLjob( outDir = file.path(ortho2OutDir,"orthoMCL"),
-                   proteomeFiles = c(filterORFout,
-                                     unlist(refGenomes),
-                                     unlist(outGroupGenomes)),
-                   taxon_codes = c(names(transdecoderOutPepFiles),
-                                   names(refGenomes),
-                                   names(outGroupGenomes)),
-                   blastCPU=2, blastArraySize=50)
-
-
-#
-# Make new trees based on the new ortholog groups..
-# 
-
-# 1. Create peptide fasta files for each group
-# 2. Align with mafft
-# 3. Create nucleotide fasta files for each group (***Convert names)
-# 4. Convert alignments to nucletides with pal2nal
-# 5. Generate trees with phangorn
