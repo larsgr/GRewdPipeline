@@ -1,6 +1,10 @@
 source("processes/SLURMscript/createSLURMscript.R")
 
-createOrthoMCLjob <- function( outDir, proteomeFiles, taxon_codes, blastCPU=10){
+createOrthoMCLjob <- function( outDir, 
+                               proteomeFiles, 
+                               taxon_codes, 
+                               blastCPU=1,
+                               blastArraySize=1){
   # stop if outDir already exists
   if(file.exists(outDir)){
     stop(paste0("Could not create job because directory ",outDir," already exists!"))
@@ -20,6 +24,8 @@ createOrthoMCLjob <- function( outDir, proteomeFiles, taxon_codes, blastCPU=10){
   
   # copy config file
   file.copy("processes/orthoMCL/orthomcl.config",outDir)
+  # copy splitFasta script
+  file.copy("processes/orthoMCL/splitFasta",outDir)
   
   prepScript <- paste( sep="\n",
                       "module load orthomcl",
@@ -34,30 +40,39 @@ createOrthoMCLjob <- function( outDir, proteomeFiles, taxon_codes, blastCPU=10){
                       "cd ..",
                       "cat compliantFasta/*.fasta > allProteomes.fasta",
                       "",
-                      "makeblastdb -in allProteomes.fasta -dbtype prot -out allProteomes.db")
+                      "makeblastdb -in allProteomes.fasta -dbtype prot -out allProteomes.db",
+                      "",
+                      "mkdir tmp",
+                      paste("./splitFasta allProteomes.fasta",blastArraySize,"tmp/part") )
   
   
   createSLURMscript(script = prepScript, workdir = outDir, 
                     jobName = "prepOrthoMCL")
  
   
-  blastScript <- paste( sep="\n",
-                       "module load blast+",
-                       "",
+  blastScript <- paste(sep="\n",
                        paste("blastp",
-                             "-query allProteomes.fasta",
+                             "-query", sprintf("tmp/part_%04d.fa",1:blastArraySize),
                              "-db allProteomes.db",
                              "-outfmt 6",
-                             "-out all_vs_all.out",
+                             "-out",sprintf("tmp/part_%04d.blastp",1:blastArraySize),
                              "-num_threads", blastCPU))
-  
-  createSLURMscript(script = blastScript, workdir = outDir,
-                    jobName = "blastOrthoMCL", ntasks = blastCPU)
-                       
+  write(blastScript, file.path(outDir,"commands.txt"))
+
+  createSLURMarray(commandListFile = "commands.txt",
+                   arraySize = blastArraySize,
+                   workdir = outDir,
+                   preScript="module load blast+",
+                   jobName="blastOrthoMCL",
+                   ntasks=blastCPU)
+                           
   
   '
 module load orthomcl
 module load mcl
+
+# concatenate the blast results
+cat tmp/*.blastp > all_vs_all.out
 
 # Database must be initialized first:
 #orthomclInstallSchema orthomcl.config install_schema.log

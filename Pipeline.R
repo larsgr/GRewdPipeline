@@ -397,3 +397,69 @@ ArrayRJob(x = rev(alnBigCdsFiles), outDir = file.path(orthoOutDir,"treesNuc"),
           }) -> makeNucTreeJob
 
 generateScript(makeNucTreeJob)
+
+
+
+
+
+
+###
+#
+# Ortholog groups with out groups:
+# ===================
+#
+
+
+ortho2OutDir <- file.path(pipelineOutDir,"orthos2")
+dir.create(ortho2OutDir)
+
+###############
+#
+# Download reference protein sequences for Barley and Brachypodium
+#
+# Note that the proteomes have only one representative sequence per gene.
+
+
+outGroupGenomes <- list(
+  Zm_R = file.path(refGenDir,"ZmB73_5a_WGS_translations.fasta"),
+  Sb_R = file.path(refGenDir,"sorghum1.4Proteins.fa"),
+  Os_R = file.path(refGenDir,"rap2Protein.fa")
+)
+
+outGroupGenomesNucl <- list(
+  Zm_R = file.path(refGenDir,"ZmB73_5a_WGS_cds.fasta"),
+  Sb_R = file.path(refGenDir,"sorghum1.4CDS.fa"),
+  Os_R = file.path(refGenDir,"rap2BestGuessCds.fa")
+)
+
+# NOTE: Zm transcripts ID's differ for peptide ID's  (_T/_FGT instead of _P/_FGP)
+
+# Dowloaded files:
+# ftp://ftpmips.helmholtz-muenchen.de/plants/sorghum/sorghum1.4Proteins.fa
+# ftp://ftpmips.helmholtz-muenchen.de/plants/sorghum/sorghum1.4CDS.fa
+# ftp://ftp.maizesequence.org/pub/maize/release-5b/working-set/ZmB73_5a_WGS_cds.fasta.gz
+# ftp://ftp.maizesequence.org/pub/maize/release-5b/working-set/ZmB73_5a_WGS_translations.fasta.gz
+# ftp://ftpmips.helmholtz-muenchen.de/plants/rice/rap2BestGuessCds.fa
+# ftp://ftpmips.helmholtz-muenchen.de/plants/rice/rap2Protein.fa
+
+
+
+
+# orthoMCL - ortholog group finder
+#   input: longetsORF sequences + reference genomes (peptide sequences)
+#  output: groups.txt (ortholog groups)
+#          allProteomes.fasta (combined sequences from all species)
+#          allProteomes.db* (blast database)
+#          all_vs_all.out (all vs all blast result)
+
+source("processes/orthoMCL/createOrthoMCLjob.R")
+
+createOrthoMCLjob( outDir = file.path(ortho2OutDir,"orthoMCL"),
+                   proteomeFiles = c(filterORFout,
+                                     unlist(refGenomes),
+                                     unlist(outGroupGenomes)),
+                   taxon_codes = c(names(transdecoderOutPepFiles),
+                                   names(refGenomes),
+                                   names(outGroupGenomes)),
+                   blastCPU=2, blastArraySize=50)
+
