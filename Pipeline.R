@@ -384,7 +384,7 @@ ArrayRJob(x = rev(alnBigFaFiles), outDir = file.path(orthoOutDir,"pal2nal"),
 generateScript(pal2nalJob)
 
 #
-# Generate trees for the nucleotie alignments
+# Generate trees for the nucleotide alignments
 #
 
 alnBigCdsFiles <- file.path(pal2nalJob$outDir,paste0(names(which(grpSizes>4)),".cds.aln"))
@@ -463,3 +463,13 @@ createOrthoMCLjob( outDir = file.path(ortho2OutDir,"orthoMCL"),
                                    names(outGroupGenomes)),
                    blastCPU=2, blastArraySize=50)
 
+
+#
+# Make new trees based on the new ortholog groups..
+# 
+
+# 1. Create peptide fasta files for each group
+# 2. Align with mafft
+# 3. Create nucleotide fasta files for each group (***Convert names)
+# 4. Convert alignments to nucletides with pal2nal
+# 5. Generate trees with phangorn
