@@ -46,11 +46,7 @@ readFilesTbl$trimmedRight <- file.path(pipelineOutDir,"trimmo",paste0(readFilesT
 #     output: assembled transcript sequences
 
 
-# define output files
-lapply( setNames(names(asmSamples), names(asmSamples)),function(assemblyName){
-  file.path(pipelineOutDir,"trinity", assemblyName, paste0(assemblyName,".fasta"))
-}) -> trinityOutput
-                                                         
+                                                       
 
 source("processes/trinity/createTrinityJob.R")
 
@@ -131,7 +127,11 @@ source("processes/filterLongestORF/createFilterORFjob.R")
 transdecoderOutPepFiles <- sapply(c("NaSt","BrDi","MeNu1","MeNu2","StLa","HoVu"), function(x){
   file.path(transdecoderOutDir,x,paste0(x,".fasta.transdecoder.pep"))
 })
-                  
+
+transdecoderOutCdsFiles <- sapply(c("NaSt","BrDi","MeNu1","MeNu2","StLa","HoVu"), function(x){
+  file.path(transdecoderOutDir,x,paste0(x,".fasta.transdecoder.cds"))
+})
+
 createFilterORFjob(outDir = file.path(orthoOutDir,"longestORFs"),
                    ORFfiles = transdecoderOutPepFiles,
                    outPrefix = names(transdecoderOutPepFiles))
@@ -183,6 +183,7 @@ outGroupGenomesNucl <- list(
 )
 
 # NOTE: Zm transcripts ID's differ for peptide ID's  (_T/_FGT instead of _P/_FGP)
+# NOTE: There are multiple isoforms in these annotations..
 
 # Dowloaded files:
 # ftp://ftpmips.helmholtz-muenchen.de/plants/sorghum/sorghum1.4Proteins.fa
@@ -217,8 +218,9 @@ createOrthoMCLjob( outDir = file.path(orthoOutDir,"orthoMCL"),
                    taxon_codes = c(names(transdecoderOutPepFiles),
                                    names(refGenomes),
                                    names(outGroupGenomes)),
-                   blastCPU=2, blastArraySize=50)
+                   blastCPU=1, blastArraySize=100)
 
+orthoMCLout <- file.path(orthoOutDir,"orthoMCL","groups.txt")
 
 # makeExprTables - Convert RSEM output files to more handy expression tables
 #   input: groups file from orthoMCL
@@ -271,17 +273,21 @@ generateScript(grpFastasJob)
 # 2. Generate nucleotide fasta files for each ortholog group
 #
 
-# TODO: include the outgroup species
 # Get corresponding nucleotide sequences by looking up in the tables
-# generated when selecting the longest ORF's
+# generated when selecting the longest ORF's, or use pepID2nucID function (for ref genomes)
 
-RJob( outDir = file.path(orthoOutDir,"grpCDSFastas"),
+RJob( outDir = file.path(orthoOutDir,"grpCDSFastas"),jobName = "grpCDSFastas",
       data = list( orthoGrpFile = orthoMCLout, 
-                   cdsFastas = c(refGenomesNucl,transdecoderOutCdsFiles),
+                   cdsFastas = c(refGenomesNucl,outGroupGenomesNucl,transdecoderOutCdsFiles),
                    filterORFtbl.out = 
                      setNames(file.path(orthoOutDir,"longestORFs",
                                         paste0(names(transdecoderOutPepFiles),".tbl")),
-                              names(transdecoderOutPepFiles)) ),
+                              names(transdecoderOutPepFiles)),
+                   pepID2nucID = list(
+                     Zm_R = function(pepID){
+                       sub( "_FGP","_FGT",
+                            sub("_P","_T",pepID))
+                     }) ),
       FUN = function(){
         source("/mnt/users/lagr/GRewd/pipeline/R/orthoGrpTools.R")
         # load ortholog groups
@@ -313,6 +319,8 @@ RJob( outDir = file.path(orthoOutDir,"grpCDSFastas"),
               seqID <- sub(".*\\|","",fullSeqID)
               if(spc %in% names(cdsID)){
                 outSeqs <- c(outSeqs,seqs[[spc]][ cdsID[[spc]][seqID] ])
+              } else if(spc %in% names(data$pepID2nucID)){
+                outSeqs <- c(outSeqs,seqs[[spc]][ data$pepID2nucID[[spc]](seqID) ])
               } else {
                 outSeqs <- c(outSeqs,seqs[[spc]][ seqID ])
               }
@@ -347,6 +355,16 @@ MAFFTJob(outDir = file.path(orthoOutDir,"grpAligned"),
 # 4. Convert protein alignments to nucleotide alignments with Pal2Nal
 # 
 
+source("processes/ArrayR/ArrayRJob.R")
+
+
+# TODO: Figuring out which groups to use should be done as part of the job
+source("R/orthoGrpTools.R")
+grpTbl <- loadOrthoGrpsTable(orthoGrpFile = orthoMCLout)
+grpSizes <- table(grpTbl$grpID)
+# only use the groups with more than four sequences
+alnBigCdsFiles <- file.path(pal2nalJob$outDir,paste0(names(which(grpSizes>4)),".cds.aln"))
+
 
 # for each alignment (with more than four sequences)
 ArrayRJob(x = rev(alnBigFaFiles), outDir = file.path(orthoOutDir,"pal2nal"),
@@ -372,16 +390,6 @@ generateScript(pal2nalJob)
 #
 # 5. Generate trees for the nucleotide alignments
 #
-
-# TODO: Figuring out which groups to use should be done as part of the job
-
-source("processes/ArrayR/ArrayRJob.R")
-
-source("/mnt/users/lagr/GRewd/pipeline/R/orthoGrpTools.R")
-grpTbl <- loadOrthoGrpsTable(orthoGrpFile = orthoMCLout)
-grpSizes <- table(grpTbl$grpID)
-# only use the groups with more than four sequences
-alnBigCdsFiles <- file.path(pal2nalJob$outDir,paste0(names(which(grpSizes>4)),".cds.aln"))
 
 ArrayRJob(x = rev(alnBigCdsFiles), outDir = file.path(orthoOutDir,"treesNuc"),
           jobName = "nucTree", arraySize = 100, 
