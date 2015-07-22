@@ -15,10 +15,10 @@ RJob <- function( data=NULL, FUN, outDir, jobName = "RJob", nThreads=1){
   return(job)
 }
 
-generateScript.RJob = function( job ){
+generateScript.RJob = function( job, overwrite=FALSE ){
   with(job, {
     # stop if outDir already exists
-    if(file.exists(outDir)){
+    if(file.exists(outDir) & (overwrite==FALSE) ){
       stop(paste0("Could not create job because directory ",outDir," already exists!"))
     }
     
@@ -48,7 +48,5 @@ generateScript.RJob = function( job ){
   }) 
 }
 
-generateScript <- function(job){
-  UseMethod( "generateScript", job )
-}
+generateScript <- function(job, ...) UseMethod( "generateScript" )
 

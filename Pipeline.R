@@ -347,7 +347,7 @@ MAFFTJob(outDir = file.path(orthoOutDir,"grpAligned"),
          inFastaDir = grpFastasJob$outDir 
          ) -> myMAFFTJob
 
-# generateScript(myMAFFTJob)
+generateScript(myMAFFTJob)
 
 
 
@@ -363,12 +363,11 @@ source("R/orthoGrpTools.R")
 grpTbl <- loadOrthoGrpsTable(orthoGrpFile = orthoMCLout)
 grpSizes <- table(grpTbl$grpID)
 # only use the groups with more than four sequences
-alnBigCdsFiles <- file.path(pal2nalJob$outDir,paste0(names(which(grpSizes>4)),".cds.aln"))
-
+alnBigFaFiles <- file.path(myMAFFTJob$outDir,paste0(names(which(grpSizes>4)),".aln"))
 
 # for each alignment (with more than four sequences)
 ArrayRJob(x = rev(alnBigFaFiles), outDir = file.path(orthoOutDir,"pal2nal"),
-          jobName = "pal2nal", arraySize = 100,
+          jobName = "pal2nal", arraySize = 180,
           commonData=list( grpCDSpath = grpCDSFastasJob$outDir),
           FUN=function(alignedPepFile){
             cdsFile <- file.path(commonData$grpCDSpath, 
@@ -386,6 +385,8 @@ ArrayRJob(x = rev(alnBigFaFiles), outDir = file.path(orthoOutDir,"pal2nal"),
           }) -> pal2nalJob
 
 generateScript(pal2nalJob)
+
+alnBigCdsFiles <- file.path(pal2nalJob$outDir,paste0(names(which(grpSizes>4)),".cds.aln"))
 
 #
 # 5. Generate trees for the nucleotide alignments

@@ -1,4 +1,5 @@
 source("processes/SLURMscript/createSLURMscript.R")
+source("processes/RJob/RJob.R")
 
 
 MAFFTJob <- function( inFastaDir,
@@ -19,38 +20,25 @@ MAFFTJob <- function( inFastaDir,
   return(job)
 }
 
-generateScript.MAFFTJob = function( job ){
+generateScript.MAFFTJob = function( job, overwrite=FALSE ){
   with(job, {
-    # stop if outDir already exists
-    if(file.exists(outDir)){
-      stop(paste0("Could not create job because directory ",outDir," already exists!"))
-    }
     
-    dir.create(outDir, recursive = T) # create output directory
-    
-    #### WARNING: The preScript is executed in paralell, but the commands.txt should only
-    ####          be generated once!
-    ####
-    #### TODO: Should set quiet parameter and threads parameter
-    # generate the commands in the preScript
-    # The command is:
-    #   mafft $1 > $2.aln
-    # where $1 is the full filename of the input fasta and $2 is the basename 
-    # without .fasta extension
-    preScript = paste(sep="\n",
-                      "module load mafft/7.130",
-                      "",
-                      paste("find", input$inFastaDir, "-iname '*.fasta'",
-                            "|",
-                            "perl -pe's/(.*\\/([^\\/]*)(\\.fasta))/mafft $1 > $2.aln/'",
-                            ">",
-                            "commands.txt") )
-                      
+    # make a script "prepMAFFT.job.sh" that generates the commands.txt
+    generateScript(
+      RJob(data=list(inFastaDir=input$inFastaDir),outDir=outDir,jobName="prepMAFFT",
+           FUN=function(){
+             fastaFiles <- dir(data$inFastaDir,pattern="\\.fasta$",full.names = T)
+             alnFiles <- sub("fasta$","aln",basename(fastaFiles))
+             idx <- !file.exists(alnFiles) # skip already aligned files
+             writeLines(paste("mafft --quiet",fastaFiles[idx],">",alnFiles[idx]),"commands.txt")
+           } ),
+      overwrite = overwrite
+      )
     
     
     # generate SLURM job script
     createSLURMarray(commandListFile = "commands.txt",
-                     preScript = preScript,
+                     preScript = "module load mafft/7.130",
                      workdir = outDir,
                      jobName = jobName,
                      arraySize = params$arraySize,
@@ -59,6 +47,7 @@ generateScript.MAFFTJob = function( job ){
   }) 
 }
 
-generateScript <- function(job){
-  UseMethod( "generateScript", job )
-}
+generateScript <- function(job, ...) UseMethod( "generateScript" )
+# generateScript <- function(job){
+#   UseMethod( "generateScript", job )
+# }
