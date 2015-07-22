@@ -123,7 +123,7 @@ PATH,SPECIES,TIMEPOINT,INDIVIDUAL,sampleID,chemistry,assembly
 /mnt/SeqData2/mariansc/150513_7001448.A.Project_Schubert-strandRNA3-2015-04-22/Sample_10-T0-BldR-3,MeNu2,T-1,BIdR-3,MeNu2.T-1.ind.2,correct,MeNu2
 /mnt/SeqData2/mariansc/150513_7001448.A.Project_Schubert-strandRNA3-2015-04-22/Sample_11-T0-BldR-4,MeNu2,T-1,BIdR-4,MeNu2.T-1.ind.3,correct,MeNu2
 /mnt/SeqData2/mariansc/150513_7001448.A.Project_Schubert-strandRNA3-2015-04-22/Sample_12-T0-BldR-5,MeNu2,T-1,BIdR-5,MeNu2.T-1.ind.4,correct,MeNu2
-/mnt/SeqData2/mariansc/150629_7001448.B.Project_Schubert-strandRNA4-2015-05-26/Sample_1-T1-BYa-3,HoVu,T1,BYa-3,HoVu.T1.ind.1,correct,HoVu
+/mnt/SeqData2/mariansc/150629_7001448.B.Project_Schubert-strandRNA4-2015-05-26/Sample_1-T1-BYa-3,HoVu,T1,BYa-3,HoVu.T1.ind.1,correct,NA
 /mnt/SeqData2/mariansc/150629_7001448.B.Project_Schubert-strandRNA4-2015-05-26/Sample_2-T1-BYa-4,HoVu,T1,BYa-4,HoVu.T1.ind.2,correct,HoVu
 /mnt/SeqData2/mariansc/150629_7001448.B.Project_Schubert-strandRNA4-2015-05-26/Sample_3-T1-BYa-5,HoVu,T1,BYa-5,HoVu.T1.ind.3,correct,HoVu
 /mnt/SeqData2/mariansc/150629_7001448.B.Project_Schubert-strandRNA4-2015-05-26/Sample_4-T1-BYa-6,HoVu,T1,BYa-6,HoVu.T1.ind.4,correct,HoVu
