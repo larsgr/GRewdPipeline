@@ -9,7 +9,8 @@ output:
 ```{r loadLibraries, echo =FALSE}
 library(RColorBrewer)
 library(stringr)
-source("/mnt/users/lagr/networkSimilarity/R/loadOrthoGroups.R")
+library(ggplot2)
+source("/mnt/users/lagr/GRewd/pipeline/R/orthoGrpTools.R")
 ```
 
 ```{r loadData, echo=FALSE}
@@ -20,21 +21,26 @@ tblDir <- file.path(pipelineOutDir,"orthos/exprTbls")
 
 grp11Cnt <- read.table(file = file.path(tblDir,"grpSingletonCountTbl.txt"), 
                        stringsAsFactors = F)
-grp11FPKM <- read.table(file = file.path(tblDir,"grpSingletonFPKMTbl.txt"), 
-                       stringsAsFactors = F)
+# grp11FPKM <- read.table(file = file.path(tblDir,"grpSingletonFPKMTbl.txt"), 
+#                        stringsAsFactors = F)
 grpSumCnt <- read.table(file = file.path(tblDir,"grpSumCountTbl.txt"), 
                        stringsAsFactors = F)
-grpSumFPKM <- read.table(file = file.path(tblDir,"grpSumFPKMTbl.txt"), 
-                       stringsAsFactors = F)
+# grpSumFPKM <- read.table(file = file.path(tblDir,"grpSumFPKMTbl.txt"), 
+#                        stringsAsFactors = F)
+
+files <- dir(tblDir,pattern="_full_expected_countTbl.txt",full.names = T)
+exprCntFull <- lapply(setNames(files,str_extract(basename(files),"^[^_]+")), 
+                  read.table, stringsAsFactors = F)
 
 files <- dir(tblDir,pattern="_expected_countTbl.txt",full.names = T)
+files <- files[!grepl("_full_",files)]
 exprCnt <- lapply(setNames(files,str_extract(basename(files),"^[^_]+")), 
                   read.table, stringsAsFactors = F)
 
 
-files <- dir(tblDir,pattern="_FPKMTbl.txt",full.names = T)
-exprFPKM <- lapply(setNames(files,str_extract(basename(files),"^[^_]+")), 
-                  read.table, stringsAsFactors = F)
+# files <- dir(tblDir,pattern="_FPKMTbl.txt",full.names = T)
+# exprFPKM <- lapply(setNames(files,str_extract(basename(files),"^[^_]+")), 
+#                   read.table, stringsAsFactors = F)
 
 spcs <- names(exprCnt)
 spcs <- setNames(spcs,spcs)
@@ -53,25 +59,33 @@ dim(lens) <- dim(grps)
 dimnames(lens) <- dimnames(grps)
 grpsInAll <- apply(lens>0,1,all)
 grps111 <- apply(lens==1,1,all)
+grpsInDeNovo <- apply(lens[,spcs]>0,1,all)
+grps111DeNovo <- apply(lens[,spcs]==1,1,all)
+
+sum(grps111DeNovo)
+
 
 for(spc in spcs){
-  x <- as.matrix(exprCnt[[spc]])
+  x <- as.matrix(exprCntFull[[spc]])
   x <- ifelse(x<1,0,x)
   x <- log2(x)
   
   hist(x,xlab="log2(count)",main=spc,breaks=seq(0,20,by=1),col="lightblue")
+
+  isInGrps <- rownames(x) %in% unlist(grps[,spc])
+
+  lines(hist(x[isInGrps,],plot=FALSE,breaks=seq(0,20,by=1)),col="rosybrown2")
   
   isInAllGrps <- rownames(x) %in% unlist(grps[grpsInAll,spc])
   
   lines(hist(x[isInAllGrps,],plot=FALSE,breaks=seq(0,20,by=1)),col="purple")
 
-  
-  is111 <- rownames(x) %in% unlist(grps[grps111,spc])
+  is111 <- rownames(x) %in% unlist(grps[grps111DeNovo,spc])
   
   lines(hist(x[is111,],plot=FALSE,breaks=seq(0,20,by=1)),col="red")
 
-  legend("topright",legend=c("In orthogroup","In all species","Single in all"),
-         fill=c("lightblue","purple","red"))
+  legend("topright",legend=c("All transcripts","In orthogroup","In all species","Single in all"),
+         fill=c("lightblue","rosybrown2","purple","red"))
 
 }
 ```
@@ -90,15 +104,61 @@ for(spc in spcs){
   
   plot(x=NULL, xlim=c(0,20),ylim=c(0,0.15), xlab="log2(count)",ylab="Density",main=spc)
   cols=rainbow(length(dens))
+  lty=ifelse(colnames(exprCnt[[spc]])=="HoVu.T1.ind.1",2,1)
   for( i in 1:length(dens)){
-    lines(dens[[i]],col=cols[i])
+    lines(dens[[i]],col=cols[i],lty=lty[i])
   }
   
-  legend("topright",legend=colnames(exprCnt[[spc]]),
+  legend("topright",legend=colnames(exprCnt[[spc]]), lty=lty,
          lwd=2,col=cols[1:length(dens)])
 
 }
 
+
+```
+
+### Inspecting the strangeness of sample HoVu.T1.ind.1
+
+Comparing the read count densities at HoVu.T1.ind.1 with HoVu.T1.ind.2 shows that about one third of the transcripts expressed in T1 are either not expressed or expressed at much lower level in T0.
+
+```{r plotHoVuT1vsT0, echo=FALSE}
+df <- data.frame(T1.2=log2(1+exprCnt$HoVu$HoVu.T1.ind.2),
+                 T1.1=log2(1+exprCnt$HoVu$HoVu.T1.ind.1))
+
+myColors <- colorRampPalette(rev(brewer.pal(11,'Spectral')))(32)
+ggplot(df, aes(T1.2,T1.1)) + stat_bin2d(bins=20) + 
+  scale_fill_gradientn(colours=myColors, trans="log") +
+  ggtitle("HoVu T1 vs T0 read count distribution (log2)") +
+  theme_classic() +
+  geom_abline()
+
+```
+
+What are these suspect transcripts? Do they have orthologs in reference (Hv_R)? No. But they seem to have orthologs in NaSt.
+
+```{r checkSuspectGenes, echo=FALSE}
+m <- as.matrix(grpSumCnt[ ,grepl("HoVu",colnames(grpSumCnt))])
+sumNotT1 <- rowSums(m[ ,!grepl("T1.ind.1",colnames(m))])
+
+df <- data.frame(notT1=log2(1+sumNotT1),T1=log2(1+grpSumCnt$HoVu.T1.ind.1))
+
+df$nOrthos <- lens[,"Hv_R"]
+df$onlyNaStOrtho <- lens[,"HoVu"]>0 & lens[,"NaSt"]>0 & 
+                    rowSums(lens[,c("BrDi","MeNu1","MeNu2","StLa")]) == 0
+
+df$isSuspect <- df$T1 > (3+df$notT1)
+
+myColors <- colorRampPalette(rev(brewer.pal(11,'Spectral')))(32)
+ggplot(df[rowSums(m)>0,], aes(notT1,T1)) + stat_bin2d(bins=20) + 
+  scale_fill_gradientn(colours=myColors, trans="log") +
+  ggtitle("dividing line for suspect transcript") +
+  theme_classic() +
+  geom_abline(intercept=3)
+
+table(hasRefOrtho=df$nOrthos[rowSums(m)>0]>0,isSuspect=df$isSuspect[rowSums(m)>0])
+
+table(OnlyNaStOrtho=df$onlyNaStOrtho[rowSums(m)>0],
+      isSuspect=df$isSuspect[rowSums(m)>0])
 
 ```
 
@@ -173,14 +233,28 @@ heatmap(pearsonCorr,scale = "none")
 ```
 
 ### PCA
-Based on sqrt(read counts) 
+Based on log2(1+counts) of sum over all paralogs in ortholog groups that exist in all species.
+
 ```{r pcaPlot, echo=FALSE}
+#### HOW TO DO IT WITH VSD
+#
+# x <- as.matrix(grpSumCnt[grpsInAll,])
+# 
+# pDat = data.frame( spc = str_extract(colnames(x),paste(spcs,collapse="|")),
+#                    timePoint = str_extract(colnames(x),"T[0-4]") )
+# 
+# dds <- DESeqDataSetFromMatrix(countData = round(x),
+#                               colData = pDat,
+#                               design = formula(~ 1))
+# vsd <- varianceStabilizingTransformation(dds)
+# x <- assay(vsd)
+
 x <- as.matrix(grpSumCnt[grpsInAll,])
 x <- x[ rowMeans(x) > 10,]
-x <- sqrt(x)
+x <- log2(1+x)
 
 pDat = data.frame( spc = str_extract(colnames(x),paste(spcs,collapse="|")),
-                   timePoint = str_extract(colnames(x),"T[0-4]") )
+                   timePoint = str_extract(colnames(x),"T\\.?[0-4]") )
 
 pca <- prcomp(t(x))
 plot(pca)
