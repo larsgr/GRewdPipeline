@@ -367,7 +367,7 @@ alnBigFaFiles <- file.path(myMAFFTJob$outDir,paste0(names(which(grpSizes>4)),".a
 
 # for each alignment (with more than four sequences)
 ArrayRJob(x = rev(alnBigFaFiles), outDir = file.path(orthoOutDir,"pal2nal"),
-          jobName = "pal2nal", arraySize = 180,
+          jobName = "pal2nal", arraySize = 10,
           commonData=list( grpCDSpath = grpCDSFastasJob$outDir),
           FUN=function(alignedPepFile){
             cdsFile <- file.path(commonData$grpCDSpath, 
