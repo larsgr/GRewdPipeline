@@ -1,7 +1,7 @@
 source("processes/SLURMscript/createSLURMscript.R")
 
 ArrayRJob <- function( x, FUN, outDir, jobName = "ArrayRJob", commonData=NULL ,
-                       nThreads=1, arraySize=100 ){
+                       nThreads=1, arraySize=Inf ){
   if( !is.function(FUN) ) stop("FUN must be a function!")
   if( length(x) < 1 ) stop("x must have length > 0!")
 
@@ -50,7 +50,7 @@ generateScript.ArrayRJob = function( job ){
                      preScript = "module load R",
                      workdir = outDir,
                      jobName = jobName,
-                     arraySize = params$arraySize,
+                     arraySize = min(length(params$x),params$arraySize),
                      ntasks = params$nThreads)
   }) 
 }
