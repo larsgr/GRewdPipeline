@@ -500,27 +500,24 @@ RJob( outDir = file.path(splitOrthosDir,"grpCDSFastas"),jobName = "splitGrpCDSFa
           
           fullSeqIDs <- grpToChar(grps[i,]) # names of the sequences
           
-          if(length(fullSeqIDs)>4){ # only bother with groups of more than 4
-            
-            outSeqs <- list() # list to be filled sequences
-            
-            # for each sequence in group:
-            for(fullSeqID in fullSeqIDs){
-              spc <- sub("\\|.*","",fullSeqID)
-              seqID <- sub(".*\\|","",fullSeqID)
-              if(spc %in% names(cdsID)){
-                outSeqs <- c(outSeqs,seqs[[spc]][ cdsID[[spc]][seqID] ])
-              } else if(spc %in% names(data$pepID2nucID)){
-                outSeqs <- c(outSeqs,seqs[[spc]][ data$pepID2nucID[[spc]](seqID) ])
-              } else {
-                outSeqs <- c(outSeqs,seqs[[spc]][ seqID ])
-              }
+          outSeqs <- list() # list to be filled sequences
+          
+          # for each sequence in group:
+          for(fullSeqID in fullSeqIDs){
+            spc <- sub("\\|.*","",fullSeqID)
+            seqID <- sub(".*\\|","",fullSeqID)
+            if(spc %in% names(cdsID)){
+              outSeqs <- c(outSeqs,seqs[[spc]][ cdsID[[spc]][seqID] ])
+            } else if(spc %in% names(data$pepID2nucID)){
+              outSeqs <- c(outSeqs,seqs[[spc]][ data$pepID2nucID[[spc]](seqID) ])
+            } else {
+              outSeqs <- c(outSeqs,seqs[[spc]][ seqID ])
             }
-            
-            # write sequences to file:
-            seqinr::write.fasta(outSeqs,names=fullSeqIDs,
-                                file.out = paste0(rownames(grps)[i],".cds"))
           }
+          
+          # write sequences to file:
+          seqinr::write.fasta(outSeqs,names=fullSeqIDs,
+                              file.out = paste0(rownames(grps)[i],".cds"))
         }
       }) -> splitGrpCDSFastasJob
 
