@@ -20,7 +20,7 @@ MAFFTJob <- function( inFastaDir,
   return(job)
 }
 
-generateScript.MAFFTJob = function( job, overwrite=FALSE ){
+generateScript.MAFFTJob = function( job ){
   with(job, {
     
     # make a script "prepMAFFT.job.sh" that generates the commands.txt
@@ -31,8 +31,7 @@ generateScript.MAFFTJob = function( job, overwrite=FALSE ){
              alnFiles <- sub("fasta$","aln",basename(fastaFiles))
              idx <- !file.exists(alnFiles) # skip already aligned files
              writeLines(paste("mafft --quiet",fastaFiles[idx],">",alnFiles[idx]),"commands.txt")
-           } ),
-      overwrite = overwrite
+           } )
       )
     
     
