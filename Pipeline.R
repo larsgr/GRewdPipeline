@@ -589,9 +589,22 @@ ArrayRJob(x = 1:N, outDir = file.path(splitOrthosDir,"treesNuc"),
             alignedCdsFiles <- dir(commonData$alignedCdsPath,pattern="aln$",full.names = T)
             
             # run mafft on every N'th file, starting with file x
+            failedTrees <- list()
             for(i in seq(x,length(alignedCdsFiles),by=commonData$N)){
-              makeTree(alignedFastaFile = alignedCdsFiles[i], outDir = ".", type="DNA")
-            }
+              
+              cat("Generating tree for", alignedCdsFiles[i],"\n")
+              
+              tryCatch(
+                makeTree(alignedFastaFile = alignedCdsFiles[i], outDir = ".", type="DNA", bootstrap=0),
+                error = function(e) {
+                  failedTrees <- c(failedTrees,alignedCdsFiles[i])
+                  cat("Error occured when generating tree for", alignedCdsFiles[i],":",e$message,"\n")
+                })
+              # throw error if any of the trees failed
+              if(length(failedTrees)>0){
+                stop( paste("Number of failed trees:",length(failedTrees)))
+              }            }
+
           }) -> makeSplitNucTreeJob
 
 generateScript(makeSplitNucTreeJob)
