@@ -425,8 +425,8 @@ generateScript(splitGroupsJob)
 # create script for DESeq...
 
 source("processes/SLURMscript/createSLURMscript.R")
-dir.create(file.path(orthoOutDir,"VST"))
-createSLURMscript( jobName = "makeVST", workdir = file.path(orthoOutDir,"VST"),
+dir.create(file.path(orthoOutDir,"DESeq"))
+createSLURMscript( jobName = "runDESeq", workdir = file.path(orthoOutDir,"DESeq"),
                     script = c("module load R",
-                               "Rscript /mnt/users/lagr/GRewd/pipeline/processes/DESeq/makeVSTexprTbl.R")
+                               "Rscript /mnt/users/lagr/GRewd/pipeline/processes/DESeq/runDESeq.R")
                   )
