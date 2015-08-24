@@ -409,203 +409,24 @@ generateScript(makeNucTreeJob)
 # Split complex trees with clanFinder:
 #
 
-splitOrthosDir <- file.path(orthoOutDir,"splitOrthos")
-dir.create(splitOrthosDir)
-
-RJob(jobName = "clanFinder", outDir = file.path(splitOrthosDir,"clanFinder"),
+RJob(jobName = "splitGroups", outDir = file.path(orthoOutDir,"splitGroups"),
      data = list( treePath = makeNucTreeJob$outDir,
                   outGrpFile = "splitGroups.txt"),
      FUN=function(){
        source("/mnt/users/lagr/GRewd/pipeline/processes/splitTreesToGrps/splitTreesToGrps.R")
        with(data,
-         splitTreesToGrps(treePath, outGrpFile, outSpcs = c("Os_R", "Sb_R", "Zm_R"))
+         splitTreesToGrps(treePath)
        )
-     }) -> clanFinderJob
+     }) -> splitGroupsJob
 
-generateScript(clanFinderJob)
+generateScript(splitGroupsJob)
 
-splitGrpFile <- file.path(clanFinderJob$outDir,clanFinderJob$params$data$outGrpFile)
+####
+# create script for DESeq...
 
-###
-#
-# Generate phylegentic trees for each split ortho grp
-# ==============================================
-#
-# 1. Generate fasta files for each orthogroup (peptides)
-# 2. Generate nucleotide fasta files for each ortholog group
-# 3. Align each group ufing MAFFT (peptides)
-# 4. Convert protein alignments to nucleotide alignments with Pal2Nal
-# 5. Generate trees for the nucleotide alignments
-
-
-#
-# 1. generate fasta files for each orthogroup (peptides)
-#
-
-
-RJob( outDir = file.path(splitOrthosDir,"grpFastas"), jobName = "splitGrpFastas",
-      data = list( orthoGrpFile = splitGrpFile, 
-                   inFasta = file.path(orthoOutDir,"orthoMCL","allProteomes.fasta")), 
-      FUN= function(){
-        source("/mnt/users/lagr/GRewd/pipeline/R/orthoGrpTools.R")
-        grps <- loadOrthoGrpsArray(orthoGrpFile = data$orthoGrpFile)
-        seqs <- seqinr::read.fasta(file = data$inFasta)
-        for( i in 1:nrow(grps)){
-          seqIDs <- grpToChar(grps[i,])
-          seqinr::write.fasta(seqs[seqIDs],names=seqIDs,
-                              file.out = paste0(rownames(grps)[i],".fasta"))
-        }
-      }) -> splitGrpFastasJob
-
-
-generateScript(splitGrpFastasJob)
-
-#
-# 2. Generate nucleotide fasta files for each ortholog group
-#
-
-# Get corresponding nucleotide sequences by looking up in the tables
-# generated when selecting the longest ORF's, or use pepID2nucID function (for ref genomes)
-
-RJob( outDir = file.path(splitOrthosDir,"grpCDSFastas"),jobName = "splitGrpCDSFastas",
-      data = list( orthoGrpFile = splitGrpFile, 
-                   cdsFastas = c(refGenomesNucl,outGroupGenomesNucl,transdecoderOutCdsFiles),
-                   filterORFtbl.out = 
-                     setNames(file.path(orthoOutDir,"longestORFs",
-                                        paste0(names(transdecoderOutPepFiles),".tbl")),
-                              names(transdecoderOutPepFiles)),
-                   pepID2nucID = list(
-                     Zm_R = function(pepID){
-                       sub( "_FGP","_FGT",
-                            sub("_P","_T",pepID))
-                     }) ),
-      FUN = function(){
-        source("/mnt/users/lagr/GRewd/pipeline/R/orthoGrpTools.R")
-        # load ortholog groups
-        grps <- loadOrthoGrpsArray(orthoGrpFile = data$orthoGrpFile)
-        
-        # load sequence ID conversion table
-        lapply(data$filterORFtbl.out, function(tblFile) {
-          tmp <- readr::read_tsv(tblFile,col_names = c("seqID","cdsID"))
-          setNames(tmp$cdsID,tmp$seqID)
-        })  -> cdsID
-        
-        # load all input sequences
-        lapply(data$cdsFastas, function( faFile ) {
-          seqinr::read.fasta(faFile)
-        }) -> seqs
-        
-        # for each ortho group:
-        for( i in 1:nrow(grps)){
-          
-          fullSeqIDs <- grpToChar(grps[i,]) # names of the sequences
-          
-          outSeqs <- list() # list to be filled sequences
-          
-          # for each sequence in group:
-          for(fullSeqID in fullSeqIDs){
-            spc <- sub("\\|.*","",fullSeqID)
-            seqID <- sub(".*\\|","",fullSeqID)
-            if(spc %in% names(cdsID)){
-              outSeqs <- c(outSeqs,seqs[[spc]][ cdsID[[spc]][seqID] ])
-            } else if(spc %in% names(data$pepID2nucID)){
-              outSeqs <- c(outSeqs,seqs[[spc]][ data$pepID2nucID[[spc]](seqID) ])
-            } else {
-              outSeqs <- c(outSeqs,seqs[[spc]][ seqID ])
-            }
-          }
-          
-          # write sequences to file:
-          seqinr::write.fasta(outSeqs,names=fullSeqIDs,
-                              file.out = paste0(rownames(grps)[i],".cds"))
-        }
-      }) -> splitGrpCDSFastasJob
-
-generateScript(splitGrpCDSFastasJob)
-
-#
-# 3. align each group ufing MAFFT (peptides)
-#
-
-MAFFTJob(outDir = file.path(splitOrthosDir,"grpAligned"), jobName = "splitMAFFT",
-         arraySize = 10,
-         inFastaDir = splitGrpFastasJob$outDir
-) -> splitMAFFTJob
-
-generateScript(splitMAFFTJob)
-
-
-
-#
-# 4. Convert protein alignments to nucleotide alignments with Pal2Nal
-# 
-
-
-N <- 10 # arraySize
-ArrayRJob(x = 1:N, outDir = file.path(splitOrthosDir,"pal2nal"),
-          jobName = "splitPal2nal",
-          commonData=list( grpCDSpath = splitGrpCDSFastasJob$outDir,
-                           alignedPepPath = splitMAFFTJob$outDir,
-                           N = N),
-          FUN=function(x){
-            # list aligned pep files
-            alignedPepFiles <- dir(commonData$alignedPepPath,pattern="aln$",full.names = T)
-            
-            # run mafft on every N'th file, starting with file x
-            for(i in seq(x,length(alignedPepFiles),by=commonData$N)){
-              alignedPepFile <- alignedPepFiles[i]
-              
-              cdsFile <- file.path(commonData$grpCDSpath, 
-                                   sub("aln$","cds",basename(alignedPepFile)))
-              alignedCdsFile <- sub("aln$","cds.aln",basename(alignedPepFile))
-              system(paste(sep="\n",
-                           "module load pal2nal/14.0",
-                           "module load mafft/7.130",
-                           "",
-                           paste("pal2nal.pl",
-                                 alignedPepFile,
-                                 cdsFile,
-                                 "-output fasta",
-                                 ">", alignedCdsFile) ))
-            }
-          }) -> splitPal2nalJob
-
-generateScript(splitPal2nalJob)
-
-
-#
-# 5. Generate trees for the nucleotide alignments
-#
-
-N <- 50 # arraySize
-ArrayRJob(x = 1:N, outDir = file.path(splitOrthosDir,"treesNuc"),
-          jobName = "splitNucTree", 
-          commonData=list( alignedCdsPath = splitPal2nalJob$outDir,
-                           N = N),
-          FUN=function(x){
-            source("/mnt/users/lagr/GRewd/pipeline/processes/phangorn/makeTree.R")
-
-            # list aligned cds files
-            alignedCdsFiles <- dir(commonData$alignedCdsPath,pattern="aln$",full.names = T)
-            
-            # run mafft on every N'th file, starting with file x
-            failedTrees <- list()
-            for(i in seq(x,length(alignedCdsFiles),by=commonData$N)){
-              
-              cat("Generating tree for", alignedCdsFiles[i],"\n")
-              
-              tryCatch(
-                makeTree(alignedFastaFile = alignedCdsFiles[i], outDir = ".", type="DNA", bootstrap=0),
-                error = function(e) {
-                  failedTrees <- c(failedTrees,alignedCdsFiles[i])
-                  cat("Error occured when generating tree for", alignedCdsFiles[i],":",e$message,"\n")
-                })
-              # throw error if any of the trees failed
-              if(length(failedTrees)>0){
-                stop( paste("Number of failed trees:",length(failedTrees)))
-              }            }
-
-          }) -> makeSplitNucTreeJob
-
-generateScript(makeSplitNucTreeJob)
-
+source("processes/SLURMscript/createSLURMscript.R")
+dir.create(file.path(orthoOutDir,"VST"))
+createSLURMscript( jobName = "makeVST", workdir = file.path(orthoOutDir,"VST"),
+                    script = c("module load R",
+                               "Rscript /mnt/users/lagr/GRewd/pipeline/processes/DESeq/makeVSTexprTbl.R")
+                  )
