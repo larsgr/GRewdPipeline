@@ -408,6 +408,11 @@ generateScript(makeNucTreeJob)
 #
 # Split complex trees with clanFinder:
 #
+# Output:
+#   splitGroups.txt - New (sub)groups resulting from split trees
+#   goodTrees.rds - trees that pass minimum requirement (including split trees)
+#   goodGroups.txt - corresponding grps of the goodTrees
+#   goodTreeStats.rds - table with stats about each tree
 
 RJob(jobName = "splitGroups", outDir = file.path(orthoOutDir,"splitGroups"),
      data = list( treePath = makeNucTreeJob$outDir,
@@ -421,8 +426,13 @@ RJob(jobName = "splitGroups", outDir = file.path(orthoOutDir,"splitGroups"),
 
 generateScript(splitGroupsJob)
 
+
+
 ####
-# create script for DESeq...
+# Run DESeq
+#
+# Output:
+#   DE.RData - DE object containing vst, resRamp and resPeak for each species.
 
 source("processes/SLURMscript/createSLURMscript.R")
 dir.create(file.path(orthoOutDir,"DESeq"))
@@ -430,3 +440,30 @@ createSLURMscript( jobName = "runDESeq", workdir = file.path(orthoOutDir,"DESeq"
                     script = c("module load R",
                                "Rscript /mnt/users/lagr/GRewd/pipeline/processes/DESeq/runDESeq.R")
                   )
+
+#########
+#
+# Run codeml
+#
+arraySize = 10
+ArrayRJob( x = 1:arraySize, outDir = file.path(orthoOutDir,"PAML"),
+           jobName = "codeml", arraySize = arraySize, 
+           commonData = list(
+             goodTreesFile = "/mnt/NOBACKUP/mariansc/share/orthos/splitGroups/goodTrees.rds",
+             goodTreeStatFile = "/mnt/NOBACKUP/mariansc/share/orthos/splitGroups/goodTreeStats.rds",
+             codonAlnPath = "/mnt/NOBACKUP/mariansc/share/orthos/pal2nal",
+             arraySize = arraySize),
+           FUN = function(x){
+             source("/mnt/users/lagr/GRewd/pipeline/processes/runPAML/runPAML.R")
+             mainLoopPAML(x, 
+                          goodTreesFile = commonData$goodTreesFile, 
+                          goodTreeStatFile = commonData$goodTreeStatFile,
+                          codonAlnPath = commonData$codonAlnPath,
+                          arraySize = commonData$arraySize )
+           }) -> PAMLjob
+
+generateScript(PAMLjob)
+
+
+
+
