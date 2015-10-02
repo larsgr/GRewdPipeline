@@ -6,9 +6,12 @@ filterFastaLongestORF <- function(inFasta, outFasta, outTable){
 
   ORF <- read.fasta(inFasta)
   
+  # check if seq name contains "_i" to denote isoform else seperate on "|"
+  sep <- ifelse( grepl("_i",names(ORF)[1]),"_i","\\|")
+  
   # create table with sequence length, name and name with isoform removed
   dt <- data.table(len = getLength(ORF), name = names(ORF),
-                   nameNoIso = unlist(lapply(strsplit(names(ORF),"_i"),"[",1)))
+                   nameNoIso = unlist(lapply(strsplit(names(ORF),sep),"[",1)))
 
   # For each "gene", get rank order of the length of its isoforms
   dt[,isoLengthRank := rank(-len,ties.method = "first"),by=nameNoIso]

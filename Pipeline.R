@@ -1,26 +1,48 @@
 # This script generates the job scripts for the entire pipeline
 
-pipelineOutDir <- "/mnt/NOBACKUP/mariansc/share"
-
 readFilesTbl <- read.csv("indata/raw_read_sheet.csv", stringsAsFactors=F)
-
 
 # Set umask so that new files will have the group write access
 Sys.umask(mode="0002")
 
+###
+# Define directory structure
+pipelineOutDir     <- "/mnt/NOBACKUP/mariansc/share"
+trinityOutDir      <- file.path(pipelineOutDir,"trinity")
+RSEMOutDir         <- file.path(pipelineOutDir,"RSEM") 
+transdecoderOutDir <- file.path(pipelineOutDir,"transdecoder")
+orthoOutDir        <- file.path(pipelineOutDir,"orthos")
+refGenDir          <- file.path(pipelineOutDir,"refGenomes")
+
+# dir.create(trinityOutDir)
+# dir.create(RSEMOutDir)
+# dir.create(transdecoderOutDir)
+# dir.create(orthoOutDir)
+# dir.create(refGenDir)
+
+
+###
+# source R files
+source("processes/trimmo/createTrimmoJob.R")
+source("processes/trinity/createTrinityJob.R")
+source("processes/RSEM/createRSEMJob.R")
+source("processes/transdecoder/createTransdecoderJob.R")
+source("processes/filterLongestORF/createFilterORFjob.R")
+source("processes/orthoMCL/createOrthoMCLjob.R")
+source("processes/makeExprTables/createExprTablesJob.R")
+source("processes/RJob/RJob.R")
+source("processes/MAFFT/MAFFTJob.R")
+source("processes/ArrayR/ArrayRJob.R")
+source("processes/SLURMscript/createSLURMscript.R")
+
 
 ###
 #
-# General jobs:
-# ======================
+# Trimmo - Read trimming and quality control of samples
 #
-# Read trimming and quality control of samples
-
-#   trimmo - trim reads
 #     input: Raw reads
 #     output: trimmed reads
 
-source("processes/trimmo/createTrimmoJob.R")
 
 createTrimmoJob(readFileFolders = readFilesTbl$PATH, outNames = readFilesTbl$sampleID,
                 outDir = file.path(pipelineOutDir,"trimmo"), jobArraySize = 10, 
@@ -32,29 +54,15 @@ readFilesTbl$trimmedRight <- file.path(pipelineOutDir,"trimmo",paste0(readFilesT
 
 ###
 #
-# Genome specific jobs:
-# ======================
+#   Trinity - De-novo transcript assembly
 #
-#   There will be a folder for each species/de-novo assembled trancriptome. 
-# Jobs that can be run on each species independantly shall reside in the 
-# corresponding species folder.
-#
-
-
-#   trinity - De-novo transcript assembly
 #     input: trimmed reads
 #     output: assembled transcript sequences
 
-
-                                                       
-
-source("processes/trinity/createTrinityJob.R")
-
 assemblies <- na.omit(unique(readFilesTbl$assembly))
-
 trinityOutput <- list()
 for(assemblyName in assemblies){
-  trinityOutput[[assemblyName]] <- file.path(pipelineOutDir,"trinity", assemblyName, paste0(assemblyName,".fasta"))
+  trinityOutput[[assemblyName]] <- file.path(trinityOutDir, assemblyName, paste0(assemblyName,".fasta"))
   try( createTrinityJob(
          leftReadFiles = readFilesTbl$trimmedLeft[ readFilesTbl$assembly %in% assemblyName ],
          rightReadFiles = readFilesTbl$trimmedRight[ readFilesTbl$assembly %in% assemblyName ],
@@ -64,17 +72,12 @@ for(assemblyName in assemblies){
 }
 
 
+###
+#
 #   RSEM - read counts
+#
 #     input: trimmed reads, assembled transcript sequences
 #     output: read counts (genes/isoforms)
-
-source("processes/RSEM/createRSEMJob.R")
-
-
-# Put all read count jobs in sub-folders of RSEM
-RSEMOutDir <- file.path(pipelineOutDir,"RSEM")
-dir.create(RSEMOutDir)
-
 
 # create RSEM jobs for each assembly
 RSEMout <- list()
@@ -96,15 +99,12 @@ for(assemblyName in assemblies){
 }
 
 
+###
+#
 #   transDecoder - ORF finding
+#
 #     input: assembled transcript sequences
 #     output: ORF sequences (pep/nucleotides)
-
-
-transdecoderOutDir <- file.path(pipelineOutDir,"transdecoder")
-dir.create(transdecoderOutDir)
-
-source("processes/transdecoder/createTransdecoderJob.R")
 
 for( assemblyName in assemblies){
   createTransdecoderJob(outDir = file.path(transdecoderOutDir,assemblyName),
@@ -113,23 +113,41 @@ for( assemblyName in assemblies){
                         CPU = 1)
 }
 
+#
+# Get lolium perenne (genotype Falster) transcriptome
+#
+# Downloaded from:
+# http://www.ebi.ac.uk/arrayexpress/files/E-MTAB-2623/E-MTAB-2623.processed.2.zip
+# 
+
+LoPeFastaFile <- file.path(pipelineOutDir,"lolium/FALSTER_transcriptome_assembly.fasta")
+
+#
+# Run transdecoder on lolium
+#
+createTransdecoderJob(outDir = file.path(transdecoderOutDir,"LoPe"),
+                      transcriptsFile = LoPeFastaFile,
+                      jobName = "LoPe_TD",
+                      CPU = 1)
+
+
+
+###
+#
 #   longestORF - Select the longest ORF from each gene
+#
 #     input: ORF sequences (pep/nucleotides)
 #     output: longest ORF (pep/nucleotides)
 
-# create one directory to contain cross species ortholog related jobs
 
-orthoOutDir <- file.path(pipelineOutDir,"orthos")
-dir.create(orthoOutDir)
-
-source("processes/filterLongestORF/createFilterORFjob.R")
-
-transdecoderOutPepFiles <- sapply(c("NaSt","BrDi","MeNu1","MeNu2","StLa","HoVu"), function(x){
-  file.path(transdecoderOutDir,x,paste0(x,".fasta.transdecoder.pep"))
+# NOTE: Only using the MeNu1 assembly from this point
+transdecoderOutPepFiles <- sapply(c("NaSt","BrDi","MeNu1","StLa","HoVu","LoPe"), function(x){
+  dir(file.path(transdecoderOutDir,x),pattern="\\.fasta\\.transdecoder\\.pep$",full.names = T)
 })
 
-transdecoderOutCdsFiles <- sapply(c("NaSt","BrDi","MeNu1","MeNu2","StLa","HoVu"), function(x){
-  file.path(transdecoderOutDir,x,paste0(x,".fasta.transdecoder.cds"))
+
+transdecoderOutCdsFiles <- sapply(c("NaSt","BrDi","MeNu1","StLa","HoVu","LoPe"), function(x){
+  dir(file.path(transdecoderOutDir,x),pattern="\\.transdecoder\\.cds$",full.names = T)
 })
 
 createFilterORFjob(outDir = file.path(orthoOutDir,"longestORFs"),
@@ -145,7 +163,6 @@ filterORFout <- file.path(orthoOutDir,"longestORFs",paste0(names(transdecoderOut
 #
 # Note that the proteomes have only one representative sequence per gene.
 
-refGenDir <- file.path(pipelineOutDir,"refGenomes")
 refGenomes <- list(
   Bd_R = file.path(refGenDir,"brachypodium_1.2_Protein_representative.fa"),
   Hv_R = file.path(refGenDir,"barley_HighConf_genes_MIPS_23Mar12_ProteinSeq.fa")
@@ -156,7 +173,6 @@ refGenomesNucl <- list(
   Hv_R = file.path(refGenDir,"barley_HighConf_genes_MIPS_23Mar12_CDSSeq.fa")
 )
 
-# dir.create(refGenDir)
 # download.file("ftp://ftpmips.helmholtz-muenchen.de/plants/brachypodium/v1.2/brachypodium_1.2_Protein_representative.fa",
 #               destfile = refGenomes$Bd_R )
 # download.file("ftp://ftpmips.helmholtz-muenchen.de/plants/barley/public_data/genes/barley_HighConf_genes_MIPS_23Mar12_ProteinSeq.fa",
@@ -209,7 +225,6 @@ outGroupGenomesNucl <- list(
 #          allProteomes.db* (blast database)
 #          all_vs_all.out (all vs all blast result)
 
-source("processes/orthoMCL/createOrthoMCLjob.R")
 
 createOrthoMCLjob( outDir = file.path(orthoOutDir,"orthoMCL"),
                    proteomeFiles = c(filterORFout,
@@ -227,7 +242,8 @@ orthoMCLout <- file.path(orthoOutDir,"orthoMCL","groups.txt")
 #          Expression counts files from RSEM
 #   output: Several tables
 
-source("processes/makeExprTables/createExprTablesJob.R")
+# NOTE: MeNu2 is not included anymore
+RSEMout$MeNu2 <- NULL
 
 createExprTablesJob(outDir = file.path(orthoOutDir,"exprTbls"),
                     orthoGrpFile=orthoMCLout,
@@ -250,7 +266,6 @@ createExprTablesJob(outDir = file.path(orthoOutDir,"exprTbls"),
 # 1. generate fasta files for each orthogroup (peptides)
 #
 
-source("processes/RJob/RJob.R")
 
 RJob( outDir = file.path(orthoOutDir,"grpFastas"),
       data = list( orthoGrpFile = orthoMCLout, 
@@ -339,8 +354,6 @@ generateScript(grpCDSFastasJob)
 # 3. align each group ufing MAFFT (peptides)
 #
 
-source("processes/MAFFT/MAFFTJob.R")
-
 #
 MAFFTJob(outDir = file.path(orthoOutDir,"grpAligned"),
          arraySize = 100,
@@ -355,48 +368,70 @@ generateScript(myMAFFTJob)
 # 4. Convert protein alignments to nucleotide alignments with Pal2Nal
 # 
 
-source("processes/ArrayR/ArrayRJob.R")
 
 
-# TODO: Figuring out which groups to use should be done as part of the job
-source("R/orthoGrpTools.R")
-grpTbl <- loadOrthoGrpsTable(orthoGrpFile = orthoMCLout)
-grpSizes <- table(grpTbl$grpID)
-# only use the groups with more than four sequences
-alnBigFaFiles <- file.path(myMAFFTJob$outDir,paste0(names(which(grpSizes>4)),".aln"))
 
 # for each alignment (with more than four sequences)
-ArrayRJob(x = rev(alnBigFaFiles), outDir = file.path(orthoOutDir,"pal2nal"),
-          jobName = "pal2nal", arraySize = 10,
-          commonData=list( grpCDSpath = grpCDSFastasJob$outDir),
-          FUN=function(alignedPepFile){
-            cdsFile <- file.path(commonData$grpCDSpath, 
-                                 sub("aln$","cds",basename(alignedPepFile)))
-            alignedCdsFile <- sub("aln$","cds.aln",basename(alignedPepFile))
-            system(paste(sep="\n",
-                         "module load pal2nal/14.0",
-                         "module load mafft/7.130",
-                         "",
-                         paste("pal2nal.pl",
-                               alignedPepFile,
-                               cdsFile,
-                               "-output fasta",
-                               ">", alignedCdsFile) ))
+arraySize = 100
+ArrayRJob(x = 1:arraySize, 
+          outDir = file.path(orthoOutDir,"pal2nal"),
+          jobName = "pal2nal",
+          commonData=list( grpCDSpath = grpCDSFastasJob$outDir,
+                           grpAlignedPepPath = myMAFFTJob$outDir,
+                           orthoGrpFile = orthoMCLout,
+                           arraySize = arraySize,
+                           pipelineSrcPath = getwd()),
+          FUN=function(x){
+            source(file.path(commonData$pipelineSrcPath,"R/orthoGrpTools.R"))
+            
+            
+            grpTbl <- loadOrthoGrpsTable(orthoGrpFile = commonData$orthoGrpFile)
+            grpSizes <- table(grpTbl$grpID)
+            # only use the groups with more than four sequences
+            alnBigFaFiles <- file.path( commonData$grpAlignedPepPath,
+                                        paste0(names(which(grpSizes>4)),".aln"))
+            
+            for( i in seq(x,length(alnBigFaFiles),by = commonData$arraySize)){
+              alignedPepFile <- alnBigFaFiles[i]
+              cdsFile <- file.path(commonData$grpCDSpath, 
+                                   sub("aln$","cds",basename(alignedPepFile)))
+              alignedCdsFile <- sub("aln$","cds.aln",basename(alignedPepFile))
+              system(paste(sep="\n",
+                           "module load pal2nal/14.0",
+                           "module load mafft/7.130",
+                           "",
+                           paste("pal2nal.pl",
+                                 alignedPepFile,
+                                 cdsFile,
+                                 "-output fasta",
+                                 ">", alignedCdsFile) ))
+            }
           }) -> pal2nalJob
 
 generateScript(pal2nalJob)
 
-alnBigCdsFiles <- file.path(pal2nalJob$outDir,paste0(names(which(grpSizes>4)),".cds.aln"))
 
 #
 # 5. Generate trees for the nucleotide alignments
 #
 
-ArrayRJob(x = rev(alnBigCdsFiles), outDir = file.path(orthoOutDir,"treesNuc"),
-          jobName = "nucTree", arraySize = 100, 
+arraySize = 100
+ArrayRJob(x = 1:arraySize, 
+          outDir = file.path(orthoOutDir,"treesNuc"),
+          jobName = "nucTree", 
+          commonData=list( grpAlignedCdsPath = pal2nalJob$outDir,
+                           arraySize = arraySize,
+                           pipelineSrcPath = getwd()),
           FUN=function(alignedFastaFile){
-            source("/mnt/users/lagr/GRewd/pipeline/processes/phangorn/makeTree.R")
-            makeTree(alignedFastaFile = alignedFastaFile, outDir = ".", type="DNA")
+            source(file.path(commonData$pipelineSrcPath,"processes/phangorn/makeTree.R"))
+            
+            grpAlignedCdsFiles <- dir(commonData$grpAlignedCdsPath, full.names = T,
+                                      pattern="\\.aln$" )
+            for( i in seq(x,length(grpAlignedCdsFiles),by = commonData$arraySize)){
+              alignedFastaFile <- grpAlignedCdsFiles[i]
+              
+              makeTree(alignedFastaFile = alignedFastaFile, outDir = ".", type="DNA")
+            }
           }) -> makeNucTreeJob
 
 generateScript(makeNucTreeJob)
@@ -431,13 +466,13 @@ generateScript(splitGroupsJob)
 ####
 # Run DESeq
 #
+# Input: exprTbls
 # Output:
 #   DE.RData - DE object containing vst, resRamp and resPeak for each species.
 
-source("processes/SLURMscript/createSLURMscript.R")
 dir.create(file.path(orthoOutDir,"DESeq"))
 createSLURMscript( jobName = "runDESeq", workdir = file.path(orthoOutDir,"DESeq"),
-                    script = c("module load R",
+                    script = c("module load R/3.1.3",
                                "Rscript /mnt/users/lagr/GRewd/pipeline/processes/DESeq/runDESeq.R")
                   )
 
@@ -445,7 +480,7 @@ createSLURMscript( jobName = "runDESeq", workdir = file.path(orthoOutDir,"DESeq"
 #
 # Run codeml
 #
-arraySize = 10
+arraySize = 100
 ArrayRJob( x = 1:arraySize, outDir = file.path(orthoOutDir,"PAML"),
            jobName = "codeml", arraySize = arraySize, 
            commonData = list(

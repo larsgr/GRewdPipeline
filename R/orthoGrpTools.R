@@ -26,7 +26,7 @@ OrthoGrpTableToArray <- function(grpTable){
   genSpcArray <- stringr::str_split_fixed(grpTable$seqID,"\\|",2)
   
   grps <- tapply(genSpcArray[ ,2],list(grp=grpTable$grpID,spc=genSpcArray[ ,1]), function(x){x})
-  return(grps)
+  return( grps[unique(grpTable[ ,2]), ] ) # tapply orders groups, but we want the original order of grps
 }
 
 loadOrthoGrpsArray <- function(orthoGrpFile){

@@ -116,29 +116,29 @@ getMinReqTrees <- function(allTrees, splitTrees) {
 
 getAdditionalStats <- function(trees){
   # species
-  spcs <- c("MeNu1","MeNu2","NaSt","StLa","HoVu","BrDi","Hv_R","Bd_R")
+  spcs <- c("MeNu1","NaSt","StLa","HoVu","BrDi","LoPe","Hv_R","Bd_R")
   sapply(spcs, function(spc){
     sapply(trees, function(tree){
       sum(grepl(paste0("^",spc),tree$tip.label))
     })
   })-> nSpcs2
   
-  nCoreSpc <- rowSums(nSpcs2[,c("HoVu","BrDi","Hv_R","Bd_R")]>0)
+  nCoreSpc <- rowSums(nSpcs2[,c("HoVu","BrDi","Hv_R","Bd_R","LoPe")]>0)
   nCoreDeNovoSpc <- rowSums(nSpcs2[,c("HoVu","BrDi")]>0)
-  nBasalSpc <- rowSums(nSpcs2[,c("MeNu1","MeNu2","NaSt","StLa")]>0)
+  nBasalSpc <- rowSums(nSpcs2[,c("MeNu1","NaSt","StLa")]>0)
   
   has2BasalAnd2Core <- nCoreSpc>1 & nBasalSpc>1
-  hasAllDenovo <- nCoreDeNovoSpc==2 & nBasalSpc==4
-  hasAllPooids <- nCoreSpc==4 & nBasalSpc==4
+  hasAllDenovo <- nCoreDeNovoSpc==2 & nBasalSpc==3
+  hasAllPooids <- nCoreSpc==5 & nBasalSpc==3
   
   # has core split
   sapply(trees,function(tree){
-    isClan(tree,grepl("^(H|B)",tree$tip.label))
+    isClan(tree,grepl("^(H|B|LoPe)",tree$tip.label))
   }) -> isCoreClan
   
   hasParalogs <- rowSums(nSpcs2>1)>0
   
-  sapply(c("H","B","MeNu","NaSt","StLa"), function(spc){
+  sapply(c("H","B","MeNu","NaSt","StLa","LoPe"), function(spc){
     sapply(trees,function(tree){
       isInGrp <- grepl(paste0("^",spc),tree$tip.label)
       if( sum(isInGrp) < 2){

@@ -5,8 +5,8 @@ library(DESeq2)
 library(stringr)
 
 
-# set some usefull constants:
-spcs <- c("BrDi","HoVu","MeNu1","MeNu2","StLa","NaSt")
+# set some useful constants:
+spcs <- c("BrDi","HoVu","MeNu1","StLa","NaSt")
 spcs <- setNames(spcs,spcs)
 
 TtoX <- c(`T-1`=0,T0=1,T1=2,T3=3,T4=4)
