@@ -114,22 +114,28 @@ for( assemblyName in assemblies){
 }
 
 #
-# Get lolium perenne (genotype Falster) transcriptome
+# Get lolium perenne transcriptome
 #
-# Downloaded from:
+# (LoPeF) Lolium Perenne low quality (genotype Falster) downloaded from:
 # http://www.ebi.ac.uk/arrayexpress/files/E-MTAB-2623/E-MTAB-2623.processed.2.zip
-# 
+# (LoPe) Lolium Perenne high quality downloaded from:
+# http://www.ebi.ac.uk/ena/data/view/GAYX01000001-GAYX01185833
 
-LoPeFastaFile <- file.path(pipelineOutDir,"lolium/FALSTER_transcriptome_assembly.fasta")
+LoPe_FastaFile <- file.path(pipelineOutDir,"lolium/lolium_perenne_P226_135_16.fasta")
+LoPeF_FastaFile <- file.path(pipelineOutDir,"lolium/FALSTER_transcriptome_assembly.fasta")
 
 #
 # Run transdecoder on lolium
 #
-createTransdecoderJob(outDir = file.path(transdecoderOutDir,"LoPe"),
-                      transcriptsFile = LoPeFastaFile,
-                      jobName = "LoPe_TD",
+createTransdecoderJob(outDir = file.path(transdecoderOutDir,"LoPeF"),
+                      transcriptsFile = LoPeF_FastaFile,
+                      jobName = "LoPeF_TD",
                       CPU = 1)
 
+createTransdecoderJob(outDir = file.path(transdecoderOutDir,"LoPe"),
+                      transcriptsFile = LoPe_FastaFile,
+                      jobName = "LoPe_TD",
+                      CPU = 1)
 
 
 ###
@@ -139,14 +145,14 @@ createTransdecoderJob(outDir = file.path(transdecoderOutDir,"LoPe"),
 #     input: ORF sequences (pep/nucleotides)
 #     output: longest ORF (pep/nucleotides)
 
-
+# TODO: WARNING! This doesn't work if not transdecoder is already finished
 # NOTE: Only using the MeNu1 assembly from this point
-transdecoderOutPepFiles <- sapply(c("NaSt","BrDi","MeNu1","StLa","HoVu","LoPe"), function(x){
+transdecoderOutPepFiles <- sapply(c("NaSt","BrDi","MeNu1","StLa","HoVu","LoPe","LoPeF"), function(x){
   dir(file.path(transdecoderOutDir,x),pattern="\\.fasta\\.transdecoder\\.pep$",full.names = T)
 })
 
 
-transdecoderOutCdsFiles <- sapply(c("NaSt","BrDi","MeNu1","StLa","HoVu","LoPe"), function(x){
+transdecoderOutCdsFiles <- sapply(c("NaSt","BrDi","MeNu1","StLa","HoVu","LoPe","LoPeF"), function(x){
   dir(file.path(transdecoderOutDir,x),pattern="\\.transdecoder\\.cds$",full.names = T)
 })
 
@@ -233,7 +239,7 @@ createOrthoMCLjob( outDir = file.path(orthoOutDir,"orthoMCL"),
                    taxon_codes = c(names(transdecoderOutPepFiles),
                                    names(refGenomes),
                                    names(outGroupGenomes)),
-                   blastCPU=1, blastArraySize=100)
+                   blastCPU=1, blastArraySize=150)
 
 orthoMCLout <- file.path(orthoOutDir,"orthoMCL","groups.txt")
 
@@ -243,11 +249,13 @@ orthoMCLout <- file.path(orthoOutDir,"orthoMCL","groups.txt")
 #   output: Several tables
 
 # NOTE: MeNu2 is not included anymore
-RSEMout$MeNu2 <- NULL
+RSEMoutSubset <- RSEMout
+RSEMoutSubset$MeNu2 <- NULL
+RSEMoutSubset$NaSt <- RSEMout$NaSt[grepl("NaSt1",names(RSEMout$NaSt))]
 
 createExprTablesJob(outDir = file.path(orthoOutDir,"exprTbls"),
                     orthoGrpFile=orthoMCLout,
-                    RSEMout=RSEMout)
+                    RSEMout=RSEMoutSubset)
 
 
 ###
@@ -422,12 +430,15 @@ ArrayRJob(x = 1:arraySize,
           commonData=list( grpAlignedCdsPath = pal2nalJob$outDir,
                            arraySize = arraySize,
                            pipelineSrcPath = getwd()),
-          FUN=function(alignedFastaFile){
+          FUN=function(x){
             source(file.path(commonData$pipelineSrcPath,"processes/phangorn/makeTree.R"))
             
             grpAlignedCdsFiles <- dir(commonData$grpAlignedCdsPath, full.names = T,
                                       pattern="\\.aln$" )
-            for( i in seq(x,length(grpAlignedCdsFiles),by = commonData$arraySize)){
+            
+            grpAlignedCdsFiles <- rev(grpAlignedCdsFiles) # smallest grps first
+            
+            for( i in seq(x,length(grpAlignedCdsFiles),by = commonData$arraySize,)){
               alignedFastaFile <- grpAlignedCdsFiles[i]
               
               makeTree(alignedFastaFile = alignedFastaFile, outDir = ".", type="DNA")
@@ -472,7 +483,7 @@ generateScript(splitGroupsJob)
 
 dir.create(file.path(orthoOutDir,"DESeq"))
 createSLURMscript( jobName = "runDESeq", workdir = file.path(orthoOutDir,"DESeq"),
-                    script = c("module load R/3.1.3",
+                    script = c("module load R/3.1.0",
                                "Rscript /mnt/users/lagr/GRewd/pipeline/processes/DESeq/runDESeq.R")
                   )
 
