@@ -36,7 +36,7 @@ generateScript.RJob = function( job, overwrite=FALSE ){
     
     # generate the script:
     script <- paste( sep="\n",
-                     "module load R/3.1.3",
+                     "module load R/3.1.0",
                      "",
                      "Rscript script/runRFUN.R" )
     

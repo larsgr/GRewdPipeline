@@ -1,0 +1,115 @@
+---
+title: "DE analysis 2. All groups"
+output: html_document
+---
+
+```{r loadLibraries, echo=FALSE, message=FALSE}
+library(DESeq2)
+library(gplots)
+
+
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+
+```{r loadData, echo=FALSE}
+# load DE results
+load("/mnt/NOBACKUP/mariansc/share/orthos/DESeq/DE.RData")
+
+# load coldGenes
+coldGenesTbl <- readRDS("~/GRewd/pipeline/analysis/coldGenesTbl.RDS")
+
+grps <- loadOrthoGrpsArray("/mnt/NOBACKUP/mariansc/share/orthos/orthoMCL/groups.txt")
+
+lens <- sapply(grps,length)
+dim(lens) <- dim(grps)
+dimnames(lens) <- dimnames(grps)
+
+```
+
+## All groups
+
+```{r OrthoGroupVenn, echo=FALSE}
+venn( data=apply(lens[,c("BrDi","HoVu","NaSt","MeNu1","StLa")],2,
+                 function(x){which(x>0)}))
+title(main = "Venn diagram of shared ortholog groups")
+
+```
+
+
+## Overlap of significant effects between species using all groups
+
+If there are multiple paralogs it is sufficient that one of them has significant effect.
+
+```{r plotVenn, echo=FALSE}
+# get grpIDs of significant genes
+lapply(c(ramp="resRamp",peak="resPeak"),function(eff){
+  lapply(c(up=1,down=-1),function(direction){
+    lapply(setNames(names(DE),names(DE)), function(spc){
+      with(DE[[spc]][[eff]], {
+        (padj<0.1) * sign(log2FoldChange) * (abs(log2FoldChange)>1)
+      }) -> sig
+      sig[is.na(sig)] <- 0
+      
+      flatGrpIDs <- rep(rownames(grps),lens[ ,spc])
+      spcGeneIDs <- unlist(grps[,spc])
+      
+      sigGeneIDs <- rownames(DE[[spc]][[eff]])[sig==direction]
+      sigGrpIDs <- flatGrpIDs[match(sigGeneIDs,spcGeneIDs)]
+      
+      return( unique(sigGrpIDs))
+    })
+  }) 
+}) -> sigGrpIds
+
+venn( data=sigGrpIds$peak$up[c("BrDi","HoVu","NaSt","MeNu1","StLa")])
+
+title( main="Significant peak effect",
+       sub="adj.P < 0.1, log2FC > 1")
+
+venn( data=sigGrpIds$ramp$up[c("BrDi","HoVu","NaSt","MeNu1","StLa")])
+
+title( main="Significant ramp effect",
+       sub="adj.P < 0.1, log2FC > 1")
+
+venn( data=sigGrpIds$peak$down[c("BrDi","HoVu","NaSt","MeNu1","StLa")])
+
+title( main="Significant negative peak effect",
+       sub="adj.P < 0.1, log2FC < -1")
+
+venn( data=sigGrpIds$ramp$down[c("BrDi","HoVu","NaSt","MeNu1","StLa")])
+
+title( main="Significant negative ramp effect",
+       sub="adj.P < 0.1, log2FC < -1")
+
+```
+
+## Only groups from cold genes
+
+Note: there are 40 groups in the cold genes list
+
+```{r PlotVennColdGenes, echo=FALSE}
+coldGeneGrpIDs <- unique(coldGenesTbl$grpID[!is.na(coldGenesTbl$grpID)])
+
+lapply(sigGrpIds,lapply,lapply,function(grpIDs){
+  grpIDs[grpIDs %in% coldGeneGrpIDs]
+}) -> sigColdGrpIDs
+
+venn( data=sigColdGrpIDs$peak$up[c("BrDi","HoVu","NaSt","MeNu1","StLa")])
+title( main="Significant peak effect",
+       sub="adj.P < 0.1, log2FC > 1")
+
+venn( data=sigColdGrpIDs$ramp$up[c("BrDi","HoVu","NaSt","MeNu1","StLa")])
+title( main="Significant ramp effect",
+       sub="adj.P < 0.1, log2FC > 1")
+
+venn( data=sigColdGrpIDs$peak$down[c("BrDi","HoVu","NaSt","MeNu1","StLa")])
+title( main="Significant negative peak effect",
+       sub="adj.P < 0.1, log2FC < -1")
+
+venn( data=sigColdGrpIDs$ramp$down[c("BrDi","HoVu","NaSt","MeNu1","StLa")])
+title( main="Significant negative ramp effect",
+       sub="adj.P < 0.1, log2FC < -1")
+
+```
+

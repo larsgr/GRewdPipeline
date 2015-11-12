@@ -92,16 +92,32 @@ markTree <- function(tree, pattern){
   return(tree)
 }
 
+# warning assumes the existance of the file "aln.phylip"
 runCodeML <- function( markedTree, outFile, ... ){
-  write.tree(markedTree, file = "tree")
-  write( ctlFileTxt(seqfile = "aln.phylip",
-                    treefile = "tree",
-                    outfile = outFile,
-                    ...),
-         file = "codeml.ctl")  
+  if(file.exists(outFile)){
+    cat("Skipping codeml for existing file",outFile,"\n")    
+  } else{
+    outTmp <-  paste0(outFile,".tmp")
+    write.tree(markedTree, file = "tree")
+    write( ctlFileTxt(seqfile = "aln.phylip",
+                      treefile = "tree",
+                      outfile = outTmp,
+                      ...),
+           file = "codeml.ctl")  
+    
+    cat("Running codeml for",outFile,"\n")
+
+    if(file.exists(outTmp)){
+      unlink(outTmp) # remove old tmp file
+    }
+    
+    system("codeml")
+
+    if(file.exists(outTmp)){
+      file.rename(outTmp,outFile)
+    }
+  }
   
-  cat("Running codeml for",outFile,"\n")
-  system("codeml")
 }
 
 
@@ -124,7 +140,7 @@ runCodeML <- function( markedTree, outFile, ... ){
 # Store results under a folder for each hypothesis
 #   name of result file is grp1234.out
 # put temporary files in working directory
-doPAML <- function(tree, grpID, codonAlnPath, outDir){
+doPAML <- function(tree, grpID, codonAlnPath, outGrpDir){
   # Find and load the corresponding alignment fasta file
   # Split group IDs have a ".XX" suffix, get the base group ID:
   grpID.noSplit <- sub("\\.[0-9]*","",grpID)
@@ -147,9 +163,13 @@ doPAML <- function(tree, grpID, codonAlnPath, outDir){
   
   
   # patterns for recognizing the species sets
-  inGrpPattern <- "^B|^H|^MeNu|^StLa|^NaSt"
-  outGrpPattern <- "^Os|^Sb|^Zm"
-  coreGrpPattern <- "^B|^H"
+  outGrpPattern <- "^Os|^Sb|^Zm"  
+  subGrpPatterns <- c(
+    H4a = "^H|^LoPe|^B|^MeNu|^StLa|^NaSt",
+    H4b = "^H|^LoPe|^B",
+    H4c = "^H|^LoPe",
+    H5a = "^NaSt",
+    H5b = "^MeNu" )
   
   # reroot the tree with the outGroup
   tree <- root( tree, outgroup = grep(outGrpPattern,tree$tip.label) )
@@ -157,31 +177,22 @@ doPAML <- function(tree, grpID, codonAlnPath, outDir){
   
   # for each hypothesis:
   
-  
+  for( h in names(subGrpPatterns)){
+    # Only run if subGrpPattern exists in tree
+    if( length(grep(subGrpPatterns[h],tree$tip.label)) > 0){
+      # mark the tree
+      markedTree <- markTree(tree, subGrpPatterns[h])
+      
+      runCodeML( markedTree=markedTree,
+                 outFile=file.path( outGrpDir, paste(grpID,h,"H0.out",sep = "_") ),
+                 fix_omega = 1 )    
+    
+      runCodeML( markedTree=markedTree,
+                 outFile=file.path( outGrpDir, paste(grpID,h,"H1.out",sep = "_") ),
+                 fix_omega = 0 )
+    }
+  }
 
-  h <- "H0"
-  dir.create(file.path(outDir,h),showWarnings = F)
-  runCodeML( markedTree=markTree(tree, "^B|^H"), # should not matter which is marked
-             outFile=file.path( outDir, h, paste0(grpID,".out") ),
-             fix_omega = 1 )
-
-  # hypothesis 4a: positive selection on branch separating pooideae (in-group)
-  #                from rest of poaceaea (out-group)
-
-  h <- "H4a"
-  dir.create(file.path(outDir,h),showWarnings = F)
-  runCodeML( markedTree=markTree(tree, inGrpPattern),
-             outFile=file.path( outDir, h, paste0(grpID,".out") ),
-             fix_omega = 0 )
-  
-  # hypothesis 4b: positive selection on branch separating core pooideae (core-group)
-  #                from rest 
-  
-  h <- "H4b"
-  dir.create(file.path(outDir,h),showWarnings = F)
-  runCodeML( markedTree=markTree(tree, coreGrpPattern),
-             outFile=file.path( outDir, h, paste0(grpID,".out") ),
-             fix_omega = 0 )
 }
 
 # main loop:
@@ -197,23 +208,32 @@ mainLoopPAML <- function(x, goodTreesFile, goodTreeStatFile, codonAlnPath, array
   
   # check if core pooids form a clan and each species form separate clans
   hasGoodTopology <- goodTreeStats$isCoreClan & goodTreeStats$allSpcAreClans
-  goodTopoTrees <- goodTrees[hasGoodTopology]
+  goodTopoTrees <- rev(goodTrees[hasGoodTopology]) # reverse to get smallest first
   
   outDir <- getwd() # output to job's working directory
   
   # divide the trees among the jobs in the job array
   for(i in seq(from = x, to = length(goodTopoTrees), by = arraySize)){
+    
     tree <- goodTopoTrees[[i]]
     grpID <- names(goodTopoTrees)[i]
-
+    
     # create a temp folder
     tmpDir <- tempfile(pattern="codeml")
     dir.create(tmpDir)
     
     # change working directory to temp
     setwd(tmpDir)
+    
     # run codeml on tree[i]
-    doPAML(tree, grpID, codonAlnPath, outDir)
+    # create a directory for each grp
+    outGrpDir <- file.path(outDir,grpID)
+    dir.create(outGrpDir,showWarnings = F)
+    
+  
+    doPAML(tree, grpID, codonAlnPath, outGrpDir)
+    
+    # change working directory back
     setwd(outDir)
 
     # remove temp files

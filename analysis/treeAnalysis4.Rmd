@@ -1,0 +1,464 @@
+---
+title: "treeAnalysis4 X:X ortholog trees"
+output: html_document
+---
+
+```{r loadLibraries,echo=FALSE}
+library(ape)
+library(phangorn)
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+
+```{r loadData, echo=FALSE, cache=TRUE}
+
+
+myTree <- read.tree(text = "(((((((Bd_R:1,BrDi:1):1,(Hv_R:1,HoVu:1):1):1,(MeNu1:1,MeNu2:1):2):1,StLa:4):1,NaSt:5):1,Os_R:6):1,(Zm_R:2,Sb_R:2):5):0;")
+
+
+treePath <- "/mnt/NOBACKUP/mariansc/share/orthos/treesNuc"
+treeFiles <- dir(treePath,pattern="\\.tree$")
+treeFiles <- setNames(file.path(treePath,treeFiles),
+                stringr::str_extract(treeFiles,"grp[0-9]+"))
+
+allTrees <- lapply(treeFiles, read.tree)
+
+
+grps <- loadOrthoGrpsArray(orthoGrpFile = "/mnt/NOBACKUP/mariansc/share/orthos/orthoMCL/groups.txt")
+
+# get number of genes per species per group
+lens <- unlist(lapply(grps,length))
+dim(lens) <- dim(grps)
+dimnames(lens) <- dimnames(grps)
+
+isOut <- grepl("(Os|Zm|Sb)_R",colnames(lens))
+
+```
+
+```{r defFuns, echo=FALSE}
+
+treePlot <- function(tree, ...){
+  plot.phylo(tree,show.node.label = T, 
+             tip.color = ifelse(grepl("(Os|Zm|Sb)_R",tree$tip.label),"red",
+                                ifelse(grepl("^(H|B)",tree$tip.label),"green","blue")),
+             ...)
+}
+
+treePlotU <- function(tree, ...){
+  plot.phylo(tree,show.tip.label = F,type="u",...)
+  tiplabels(pch=20,col=ifelse(grepl("(Os|Zm|Sb)_R",tree$tip.label),"red",
+                                  ifelse(grepl("^(H|B)",tree$tip.label),"green","blue")))
+}
+```
+
+### first some stats on the ortholog groups
+
+There are totally `r length(allTrees)` trees that were generated based on ortholog groups with at least 5 sequences. A few (>1%) trees failed to be generated.
+
+```{r someStats, echo=FALSE}
+
+nSpcs <- rowSums(lens[names(allTrees), ]>0)
+nGenes <- rowSums(lens[names(allTrees), ])
+
+
+barplot(table(nSpcs),ylab = "Number of ortholog groups",
+        xlab="Number of species in ortholog group")
+
+boxplot(split(nGenes,nSpcs),log = "y",xlab="Number of species in ortholog group",
+        ylab="Number of genes in ortholog group")
+
+nOutSpcs <- rowSums(lens[names(allTrees), c("Os_R","Sb_R","Zm_R")]>0)
+nCoreSpcs <- rowSums(lens[names(allTrees), c("Bd_R","BrDi","HoVu","Hv_R")]>0)
+nBasalSpcs <- rowSums(lens[names(allTrees), c("MeNu1","MeNu2","NaSt","StLa")]>0)
+
+hasOrthoInEach <- (nOutSpcs>0)  & (nCoreSpcs>0) & (nBasalSpcs>0)
+
+
+plot(table(core=nCoreSpcs,basal=nBasalSpcs,
+           ifelse(nOutSpcs>0,"out","noOut")),
+     col=rainbow(5), xlab="Number of core species", 
+     ylab="Number of basal species",
+     main=paste0(sum(nOutSpcs==0)," noOut (trees missing outgroup), ",
+                 sum(nOutSpcs>0)," out (trees with outgroup) "))
+
+```
+
+
+### Check if trees have the in-group/out-group split and core split
+
+Limit the test to only those trees that have atleast one ortholog in the basal, core and out group (`r sum(hasOrthoInEach)` trees)
+
+A well formed tree would have the out-group as a single clan and the core group as a single clan.
+
+
+```{r inOutSplit, echo=FALSE}
+
+
+# Check if tips (given by logical vector isInGrp) form a clan in the tree
+isClan <- function(tree, isInGrp){
+  clans = getClans(tree)
+  any(apply(clans,1,function(clan){
+      all(clan==isInGrp)
+  }))
+}
+
+
+sapply(allTrees,function(tree){
+  isClan(tree,grepl("(Os|Zm|Sb)_R",tree$tip.label))
+}) -> isOutGroupClan
+
+sapply(allTrees,function(tree){
+  isClan(tree,grepl("^(H|B)",tree$tip.label))
+}) -> isCoreClan
+
+table(isOutGroupClan = isOutGroupClan[hasOrthoInEach],isCoreClan = isCoreClan[hasOrthoInEach])
+
+```
+
+### Use clanFinder algorithm to split big groups
+
+In some situations orthoMCL has grouped together paralogs that were duplicated before the out-groups split from the pooids (out-paralogs). In that case the tree would not have a single out-group clan but several. ClanFinder seperates those trees into clans that each contain single out-group clan (and minimum 3 orthologs in the in-group).
+
+Trees that don't have a valid outgroup split will be attempted to split up using clanFinder.
+
+```{r defClanFinder, echo=FALSE}
+# Find all clans in the tree that contain exactly one in-clan and one out-clan
+clanFinder = function(tre, 
+                      minSize=3, 
+                      ut=c("Os_R", "Sb_R", "Zm_R"),
+                      output=c("tree", "tips"),
+                      summaryFUN=NULL) { 
+  
+    clans = getClans(tre) # phangorn
+    
+    # get species names (split on pipe)
+    specs = sapply(strsplit(colnames(clans), "|", fixed=T), "[", 1)
+
+    # convert clans to other format
+    clanList_all = apply(clans, 1, function(r) which(as.logical(r)))
+    
+    # which clans >= minSize and does not contain any outgroup species?
+    clanList_in = clanList_all[ vapply(clanList_all, function(cln){
+        length(cln) >= minSize  &&  !any(specs[cln] %in% ut)
+      }, logical(1))]
+
+    # which clans >= 2 and only contain outgroup species?
+    clanList_ut = clanList_all[vapply(clanList_all, function(cln) {
+        length(cln) >= 2 && all(specs[cln] %in% ut)
+      }, logical(1))]
+
+    # for each clan
+    #   clan is goodClan if: clan > minSize and 
+    #   contains exactly one in-clan (size >= minsize) and one out-clan
+    goodClan = vapply(clanList_all, function(cln) {
+        if(length(cln) < minSize+1) return(F)
+        sp = specs[cln]             # associated species
+        utgruppe = cln[sp %in% ut]  # out group clan members
+        ingruppe = cln[!sp %in% ut] # in group clan members
+        if(length(ingruppe) < minSize || length(utgruppe) == 0) # at least 'minsize' in and 1 out
+            return(F)
+        in_isClan = list(ingruppe) %in% clanList_in  # test if in group members form a clan
+        ut_isClan = length(utgruppe) == 1 || list(utgruppe) %in% clanList_ut # same for out members (if more than 1)
+        in_isClan && ut_isClan
+    }, logical(1))
+    
+    tip_seq = seq_along(tre$tip.label)
+    switch(match.arg(output),
+        tree = lapply(clanList_all[goodClan], function(cln) drop.tip(tre, setdiff(tip_seq, cln))),
+        tips = lapply(clanList_all[goodClan], function(cln) colnames(clans)[cln]))
+}
+
+```
+
+
+```{r runClanFinder, echo=FALSE, cache=TRUE}
+
+# The trees that don't already have a valid outgroup split and have atleast one outgroup ortho
+# and at least 3 ingroup orthos
+table( hasOutAnd3In = (nOutSpcs>0) & (nCoreSpcs+nBasalSpcs >= 3),isOutGroupClan)
+
+mustBeSplit <- !isOutGroupClan & (nOutSpcs>0) & (nCoreSpcs+nBasalSpcs >= 3)
+
+splitTrees <- lapply(allTrees[mustBeSplit], clanFinder, output="tree")
+
+
+# Check out if any clans are overlapping
+# any(sapply(splitTrees,function(trees){
+#   any(table(unlist(lapply(trees,"[[","tip.label")))>1)
+# }))
+
+plot(table(sapply(splitTrees,length)),xlab="Number of good clans found",
+     ylab="Number of trees",main="Clans found per tree:")
+
+# rename the split trees
+lapply(splitTrees,function(trees){
+  setNames(trees,seq_along(trees))
+}) -> renamedTrees
+
+# unlist the split trees
+treesSplit <- unlist(renamedTrees,recursive = F)
+
+```
+
+ClanFinder found `r length(treesSplit)` good clans in `r length(splitTrees)` trees.
+
+```{r summarizeTreesPlot, echo=FALSE, cache=TRUE}
+
+getLeaves <- function(node, tree){
+  if( node <= length(tree$tip.label)){
+    return(node)
+  } else {
+    return( unlist(lapply( tree$edge[tree$edge[,1]==node,2], getLeaves, tree)) )
+  }
+}
+
+
+summarizeTrees <- function(trees, main){
+  # remove all but the species label
+  lapply(trees,function(tree){
+    tree$tip.label <- stringr::str_extract(tree$tip.label,"^[^\\|]*")
+    return(tree)
+  }) -> ttrees
+  
+  
+  
+  nodeValidClans <- integer(0)
+  nodeValidClans2 <- integer(0)
+  nodeHasAllTips <- integer(0)
+  # for each internal node in the guide tree
+  for( node in 12:max(myTree$edge)){
+    tips <- myTree$tip.label[getLeaves(node, myTree)]
+    
+    sapply(ttrees,function(tree){
+      all(tips %in% tree$tip.label)
+    }) -> hasAllTips
+    
+    sapply(ttrees,function(tree){
+      isClan(tree, tree$tip.label %in% tips)
+    }) -> validClans
+    
+    nodeValidClans <- c(nodeValidClans,sum(validClans & hasAllTips))
+    nodeValidClans2 <- c(nodeValidClans2,sum(validClans))
+    nodeHasAllTips <- c(nodeHasAllTips,sum(hasAllTips))
+  }
+  
+  # get tip counts
+  tipClans <- integer(0)
+  tipCounts <- NULL
+  # for each tip
+  for( tip in myTree$tip.label){
+    sapply(ttrees,function(tree){
+      sum(tree$tip.label == tip)
+    }) -> nTips
+    
+    sapply(ttrees,function(tree){
+      isClan(tree, tree$tip.label == tip)
+    }) -> validClans
+    
+    tipClans <- c(tipClans,sum(nTips>1 & validClans))
+    tipCounts <- rbind(tipCounts, c(sum(nTips==0),
+                                    sum(nTips==1),
+                                    sum(nTips>1 & validClans),
+                                    sum(nTips>1 & !validClans)))
+  }
+  
+  
+  # root node always has valid clan
+  nodeValidClans2[1] <- length(ttrees)
+  nodeValidClans[1] <- nodeHasAllTips[1]
+  
+  cbind(
+    c01 = nodeValidClans2-nodeValidClans,
+    c11 = nodeValidClans,
+    c10 = nodeHasAllTips-nodeValidClans,
+    c00 = length(ttrees)-(nodeValidClans2+nodeHasAllTips-nodeValidClans)
+  )/length(ttrees) -> tipsAndClansPie
+  
+  c(
+    c01 = "#A0A0FF",
+    c11 = "#A060A0",
+    c10 = "#FFA0A0",
+    c00 = "#FFFFFF"
+  ) -> tipsAndClansPieCol
+  
+  
+  treePlot(myTree, main=main)
+  nodelabels(pie=tipsAndClansPie,piecol = tipsAndClansPieCol)
+  
+  tipPieCol <-  c("#FFFFFF", "#BAE4B3", "#74C476", "orange")
+  tiplabels(pie = tipCounts/length(ttrees), adj=0.25,
+            piecol = tipPieCol)
+  
+  legend("bottomleft",legend = c("proper clade","has all tips",
+                                 "has this tip","in-paralog",
+                                 "out-paralog"),
+         fill = c(tipsAndClansPieCol[c(1,3)],tipPieCol[-1]))
+  
+}
+
+summarizeTrees(treesSplit, 
+               main=paste0("Trees found by clanFinder (",
+                           length(treesSplit),")"))
+summarizeTrees(allTrees[isOutGroupClan], 
+               main=paste0("Trees already having out-group (",
+                           sum(isOutGroupClan),")"))
+
+```
+
+### Tree quality
+
+Minimum requirement for a tree:
+
+* Have at least one out-group species
+* Have outgroup split
+* have at least one basal and one of the de-novo core species
+
+
+```{r minimumReq, echo=FALSE}
+
+# use the split trees and the already good trees
+trees <- c(treesSplit,allTrees[isOutGroupClan])
+
+
+sapply(trees, function(tree){
+  sum(grepl("^(HoVu|BrDi)",tree$tip.label))
+}) -> nCoreDeNovoSpcs
+
+sapply(trees, function(tree){
+  sum(grepl("^(MeNu|NaSt|StLa)",tree$tip.label))
+}) -> nBasalSpcs2
+
+# minimum requirement is
+# * have outgroup and outgroup split
+# * have at least 1 basal and 1 de-novo core species
+nNoGoodTrees <- sum(!isOutGroupClan & !mustBeSplit) + 
+  sum(sapply(splitTrees,length)==0) +
+  sum(nCoreDeNovoSpcs==0 | nBasalSpcs2==0)
+
+nMinimumReqTrees <- sum(nCoreDeNovoSpcs>0 & nBasalSpcs2>0)
+
+```
+
+The number of trees that pass the minimum requirements: `r nMinimumReqTrees`
+
+The number of trees that was discarded: `r nNoGoodTrees`
+
+Out of the trees that pass the minimum requirements there are several metrics that can be used to classify the trustworthiness of the trees.
+
+* Number of species represented: Minimum req. < 2 basal and 2 core < All de-novo < All species
+* The existance of paralogs
+* The core species form a clan
+* Each species form a separate clan (the pairs MeNu1/MeNu2, HoVu/Hv_R and BrDi/Bd_R are treated as single species)
+
+```{r qualityBreakdownPlot, echo=FALSE}
+
+# continue calculation on trees that meet the minimum requirements
+trees <- trees[nCoreDeNovoSpcs>0 & nBasalSpcs2>0]
+
+# Calculate further requirements for tree quality
+
+# species
+spcs <- c("MeNu1","MeNu2","NaSt","StLa","HoVu","BrDi","Hv_R","Bd_R")
+sapply(spcs, function(spc){
+  sapply(trees, function(tree){
+    sum(grepl(paste0("^",spc),tree$tip.label))
+  })
+})-> nSpcs2
+
+nCoreSpc <- rowSums(nSpcs2[,c("HoVu","BrDi","Hv_R","Bd_R")]>0)
+nCoreDeNovoSpc <- rowSums(nSpcs2[,c("HoVu","BrDi")]>0)
+nBasalSpc <- rowSums(nSpcs2[,c("MeNu1","MeNu2","NaSt","StLa")]>0)
+
+has2BasalAnd2Core <- nCoreSpc>1 & nBasalSpc>1
+hasAllDenovo <- nCoreDeNovoSpc==2 & nBasalSpc==4
+hasAllPooids <- nCoreSpc==4 & nBasalSpc==4
+
+# hasSpcs <- factor(ifelse(!has2BasalAnd2Core,"has1BasalAnd1CoreDeNovo",
+#               ifelse(!hasAllDenovo,"has2BasalAnd2Core",
+#                      ifelse(!hasAllPooids,"hasAllDenovo","hasAll"))))
+
+hasSpcs <- factor(ifelse(!has2BasalAnd2Core,"*",
+              ifelse(!hasAllDenovo,"**",
+                     ifelse(!hasAllPooids,"***","****"))))
+
+# has core split
+sapply(trees,function(tree){
+  isClan(tree,grepl("^(H|B)",tree$tip.label))
+}) -> isCoreClan2
+
+
+hasParalogs <- rowSums(nSpcs2>1)>0
+
+sapply(c("H","B","MeNu","NaSt","StLa"), function(spc){
+  sapply(trees,function(tree){
+    isInGrp <- grepl(paste0("^",spc),tree$tip.label)
+    if( sum(isInGrp) < 2){
+      return(TRUE) # return TRUE if tip not existing
+    } else {
+      return(isClan(tree,isInGrp))      
+    }
+  })
+}) -> isSpcClan
+
+allSpcAreClans <- apply(isSpcClan,1,all)
+
+plot(table(allSpcAreClans, 
+           hasParalogs, 
+           ifelse(isCoreClan2,"coreClan","notClan"), 
+           hasSpcs),
+     col=rainbow(4), 
+     main="Breakdown of tree quality based on various metrics")
+
+legend( "bottom",
+        inset = c(0, -0.2), bty = "n", 
+        x.intersp=0.5, xjust=0,yjust=0, 
+        legend=c("Minimum req.", "2 basal and 2 core",
+                 "All de-novo", "All species"),
+        fill=rainbow(4), cex = 0.75, xpd = TRUE, horiz=T)
+
+```
+
+## Paralog Heatmap
+
+```{r paralogHeatmap, echo=FALSE}
+writeLines(text = paste0(names(trees),": ", 
+                         lapply(trees, function(tree){
+                           paste(tree$tip.label, collapse=" ")
+                           })),
+             con = "~/temp/treeGrps.txt")
+
+treeGrps <- loadOrthoGrpsArray(orthoGrpFile = "~/temp/treeGrps.txt")
+
+treeLens <- unlist(lapply(treeGrps,length))
+dim(treeLens) <- dim(treeGrps)
+dimnames(treeLens) <- dimnames(treeGrps)
+
+idx <- allSpcAreClans & hasParalogs & isCoreClan2 & hasAllDenovo
+
+heatmap(treeLens[idx,!grepl("_R",colnames(treeLens))],
+        scale="none",labRow = "", 
+        breaks=c(0:3,2^(2:5))-0.5,
+        col=RColorBrewer::brewer.pal(n = 7,"Blues"))
+
+```
+
+```{r testCode, echo=FALSE,eval=FALSE}
+
+treePlotU2 <- function(tree, ...){
+  plot.phylo(tree,show.tip.label = F,type="u",...)
+  tiplabels(pch=20,col=ifelse(grepl("(Os|Zm|Sb)_R",tree$tip.label),"red","blue"))
+}
+
+idx <- 1208
+idx <- 1247
+idx <- idx + 1
+tree <- allTrees[[idx]]
+clans <- clanFinder(tree, output = "tree")
+
+treePlotU(tree)
+for( i in seq_along(clans)){
+  tiplabels( pch=ifelse(tree$tip.label %in% clans[[i]]$tip.label,i,NA),cex=2)
+}
+legend("bottomright",pch=c(20,20,20,1,2),col=c("red","blue","green","black","black"),legend=c("outgroup","ingroup (basal)","ingroup (core)",paste("clan",1:2)),pt.cex=c(1,1,1,2,2))
+```
+

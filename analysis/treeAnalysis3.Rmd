@@ -1,0 +1,230 @@
+---
+title: "treeAnalysis3 DNA based trees"
+output: html_document
+---
+
+```{r loadLibraries,echo=FALSE}
+library(ape)
+library(phangorn)
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+
+```{r loadData, echo=FALSE, cache=TRUE}
+
+myTree <- read.tree(text = "(((((Bd_R:1,BrDi:1):1,(Hv_R:1,HoVu:1):1):1,(MeNu1:1,MeNu2:1):2):1,StLa:4):1,NaSt:5):0;")
+
+treePath <- "/mnt/NOBACKUP/mariansc/share/orthos/treesNuc"
+treeFiles <- dir(treePath,pattern="\\.tree$")
+treeFiles <- setNames(file.path(treePath,treeFiles),
+                stringr::str_extract(treeFiles,"grp[0-9]+"))
+
+allTrees <- lapply(treeFiles, read.tree)
+
+
+grps <- loadOrthoGrpsArray(orthoGrpFile = "/mnt/NOBACKUP/mariansc/share/orthos/orthoMCL/groups.txt")
+
+# get number of genes per species per group
+lens <- unlist(lapply(grps,length))
+dim(lens) <- dim(grps)
+dimnames(lens) <- dimnames(grps)
+
+isOut <- grepl("(Os|Zm|Sb)_R",colnames(lens))
+
+```
+
+
+```{r get11Trees, echo=FALSE, dev='svg'}
+is11 <- apply(lens[,!isOut]==1,1,all)
+grpIDs11 <- rownames(grps)[is11]
+
+all11Trees <- allTrees[names(allTrees) %in% grpIDs11]
+
+# drop all outgroup tips
+lapply(all11Trees,function(tree){
+  return(drop.tip(tree,grep("^(Os|Sb|Zm)_R",tree$tip.label)))
+}) ->all11Trees.noOutGrp
+
+# remove all but the species label
+lapply(all11Trees.noOutGrp,function(tree){
+  tree$tip.label <- stringr::str_extract(tree$tip.label,"^[^\\|]*")
+  return(tree)
+}) ->all11Trees.relabeled
+
+# if rooted, bitsplit may count the same split twice. so unroot
+all11trees.unrooted <- lapply(all11Trees.relabeled,unroot)
+
+plotBS(tree = myTree,BStrees = all11Trees.relabeled,type = "phylogram")
+
+# myTree$node.label <- prop.clades(myTree,all11Trees.relabeled)
+# plot(myTree, show.node.label=T)
+```
+
+There are `r length(all11Trees)` trees generated of the `r length(grpIDs11)` 1:1 grps
+
+```{r getPhyloCount, echo=FALSE}
+# convert phylogenies to strings
+
+# NOTE: it would be probably be better to use bitsplits instead getClans
+
+obj <- .compressTipLabel(all11Trees.relabeled)
+sapply(obj, function(tree){
+  i <- apply(getClans(tree),1,function(x){sum(x*2^(0:7))})
+  x <- integer(254)
+  x[i] <- as.integer(names(i))
+  return(x)
+}) -> allClans
+
+rownames(allClans) <- 1:254
+
+emptyRows <- apply(allClans<1,1,all)
+nonEmptyClans <- allClans[!emptyRows,]
+
+apply(nonEmptyClans,2,function(clan){
+  paste(names(which(clan != 0)),collapse=",")
+}) -> clanString
+
+# get sorted counts of each type of phylogeny
+phyCount <- sort(table(clanString),decreasing = T)
+```
+
+### The 20 most abundant phylogenies
+
+```{r plotAbundantPhylos, echo=FALSE, dev='svg'}
+pie(phyCount,labels = c(phyCount[1:10],rep("",length(phyCount)-10)),
+    main="Number of occurenses of each phylogeny")
+for( i in 1:20 ){
+  # get all trees with the most abundant phylogeny
+  trees <- obj[clanString==names(phyCount)[i]]
+  # re-root trees to NaSt
+  rTrees <- lapply(trees,root,"NaSt")
+  class(rTrees) <- class(trees)
+  
+  # make consensus tree
+  cTree <- consensus(rTrees)
+  
+  
+#   # reorder trees internally so node.labels and edge.lengths can be compared
+#   oTrees <- lapply(rTrees,reorderTreeIntern,cTree)
+#   class(oTrees) <- class(trees)
+#   
+#   # get bootstrap values for all nodes
+#   bs <- sapply(oTrees,function(tree){as.integer(tree$node.label)})
+#   bsMeans <- rowMeans(bs)
+#   cTree$node.label <- round(bsMeans)
+#   
+#   # get edge lengths for all trees
+#   el <- sapply(oTrees,function(tree){tree$edge.length})
+#   elMeans <- rowMeans(el)
+#   cTree$edge.length <- elMeans
+
+  plot(cTree,show.node.label=F,main=paste("Occurences: ",phyCount[i]))
+#   nodelabels(cTree$node.label, adj = c(1, 1.2),frame = "none")
+
+}
+
+
+```
+
+### The 20 most abundant splits
+
+In paranthesis is the number of occurences in the trees based on amino acid sequences.
+
+```{r plotAbundantSplit, echo=FALSE, dev='svg'}
+
+obj <- .compressTipLabel(all11trees.unrooted)
+
+lapply(obj,function(tree){
+  bs <- bitsplits(tree)
+  sort(sapply(bs$matsplit,as.integer),decreasing=T)
+}) -> allSplits
+
+splitCounts <- sort(table(unlist(allSplits)),decreasing=T)
+
+pie(splitCounts,labels = ifelse(splitCounts>50,splitCounts,""),
+    main="Number of occurenses of each split")
+
+# # Just checking that prop.part actually gives the same results
+# # Note: prop.part may give either of the synonymous splits,
+# #       e.g: 4 is same as 251 = 255-4
+# #       To fix this choose max(code, 255-code)
+# #       prop.part also returns the whole tree as a part which is removed
+# #       by the [-1] which removes the most highest splitcode (255)
+# 
+# lapply(obj,function(tree){
+#   pp <- prop.part(tree)
+#   sapply(pp,function(bits){
+#     sum(sapply(bits,function(bit){2^(8-bit)}))
+#   }) -> splitCodes
+#   as.integer(sort(pmax(splitCodes,255-splitCodes),decreasing=T)[-1])
+# }) -> allSplits2
+# 
+# identical(allSplits,allSplits2)
+
+# convert partiotion in integer form to tree form and plot
+label <- attr(obj,"TipLabel")
+plotSplit <- function(splitCode, label, ...){
+  idx <- as.logical(intToBits(splitCode)[8:1])
+  text1 <- paste0(label[idx],":1",collapse=",")
+  text2 <- paste0(label[!idx],":1",collapse=",")
+  text =sprintf("((%s):2,(%s):2);",text1,text2)
+  tree <- read.tree(text=text)
+  plot.phylo(tree,type="u", ...)
+}
+
+for(i in 1:20){
+  plotSplit(as.integer(names(splitCounts[i])),label, 
+            main=sprintf("Occurences: %i",splitCounts[i]))
+}
+
+
+```
+
+
+```{r deadCode,echo=FALSE,eval=FALSE}
+
+sapply(obj,function(tree){
+  bs <- bitsplits(tree)
+  paste(sort(sapply(bs$matsplit,function(x){sprintf("%02X",as.integer(x))})),collapse=",")
+}) -> allPhyloTypes
+phyloCount <- sort(table(allPhyloTypes),decreasing=T)
+pie(phyloCount)
+
+
+
+getFigAngle <- function(a,s,d=s){
+  x=(0.5+cos(a)*0.5*(1-d/2))+(c(-1,1)*s/4)
+  y=(0.5+sin(a)*0.5*(1-d/2))+(c(-1,1)*s/4)
+  return(c(x,y))
+}
+
+a=(2*pi*(cumsum(splitCounts)-(splitCounts/2)))/sum(splitCounts)
+s=splitCounts/sum(splitCounts)
+s = s/max(s)
+
+par(old.par)
+
+pie(splitCounts,labels = ifelse(splitCounts>50,splitCounts,""),radius = 0.4)
+
+for(i in 1:10){
+  par(new=TRUE, fig=getFigAngle(a[i],sqrt(s[i])*2/3), mar=c(0,0,0,0))
+  plotSplit(as.integer(names(splitCounts[i])),label)
+}
+
+par(old.par)
+
+
+idx <- match(names(phyloCount)[1],allPhyloTypes)
+plot(obj[[idx]])
+
+
+allSplits[,1:5]
+allPhyloTypes[1:5]
+plot.phylo(obj$grp109388)
+
+plotSplit(207,label)
+apply(allSplits[,1:5],2,function(i) {sprintf("%02X",i)})
+label[as.logical(intToBits(4)[8:1])]
+label
+```
+

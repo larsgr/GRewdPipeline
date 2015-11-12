@@ -44,10 +44,14 @@ There are `r sum(apply(lens==1,1,all))` ortholog groups that have exactly one or
 
 There are `r sum(apply(lens[,!isRef]==1,1,all))` ortholog groups that have exactly one ortholog in each de-novo transcriptomes.
 
-There are `r sum(apply(lens[,!isOut]==1,1,all))` ortholog groups that have exactly one ortholog in each de-novo transcriptomes.
+There are `r sum(apply(lens[,!isOut]==1,1,all))` ortholog groups that have exactly one ortholog in each de-novo transcriptomes, Bd_R and Hv_R.
 
 
-There are `r sum(apply(lens>0,1,all))` ortholog groups that have one or more ortholog in each species. 
+There are `r sum(apply(hasOrtho,1,all))` ortholog groups that have one or more ortholog in each species. 
+
+There are `r sum(apply(hasOrtho[,!isRef],1,all))` ortholog groups that have one or more ortholog in each de-novo transcriptomes. 
+
+There are `r sum(apply(hasOrtho[,!isOut],1,all))` ortholog groups that have one or more ortholog in each de-novo transcriptomes, Bd_R and Hv_R. 
 
 There are `r sum(apply(hasOrtho[,!isRef],1,all) & !apply(hasOrtho[,isRef],1,any))` ortholog groups that have one or more ortholog in each of the de-novo transcriptomes that is not in the reference trancriptomes.
 
@@ -84,9 +88,10 @@ barplot(nSpcPerGrpTbl,col=cols,legend.text = colnames(lens),horiz = T,
 
 Groups that are exclusive to a species or clade. Pink numbers show the groups that are represented at least once in each of the species under the branch but not in any other. Numbers on blue show the number of groups that are represented at least once in the branch but not in any other.
 
-```{r cladeSpecific, echo=FALSE, eval=FALSE}
-tree <- read.tree(text = "(((((Bd_R:1,BrDi:1):1,(Hv_R:1,HoVu:1):1):1,(MeNu1:1,MeNu2:1):2):1,StLa:4):1,NaSt:5):0;")
+```{r cladeSpecific, echo=FALSE}
+# tree <- read.tree(text = "(((((((Bd_R:1,BrDi:1):1,(Hv_R:1,HoVu:1):1):1,(MeNu1:1,MeNu2:1):2):1,NaSt:4):1,StLa:5):1,Os_R:6):1,(Zm_R:2,Sb_R:2):5):0;")
 
+tree <- read.tree(text = "(((((((Bd_R:1,BrDi:1):2,((Hv_R:1,HoVu:1):1,(LoPe:1,LoPeF:1):1):1):1,MeNu1:4):1,NaSt:5):1,StLa:6):1,Os_R:7):1,(Zm_R:2,Sb_R:2):6):0;")
 
 getAllSubTips <- function(phylo,n){
   if(n <= Ntip(phylo)){
@@ -123,7 +128,7 @@ sapply(tree$tip.label,function(i){
   sum( hasOrtho[ ,i] & rowSums(lens[ ,!(colnames(lens) %in% i)])==0)
 }) -> uniqueInSpecies
 
-plot(tree, show.node.label=F,x.lim=c(-1,6),y.lim=c(1,8.5))
+plot(tree, show.node.label=F,x.lim=c(-1,9),y.lim=c(1,12.5))
 nodelabels(cladeSpecificGenes[1, ], adj = c(1, 1.2), frame = "r", bg="lightblue")
 nodelabels(cladeSpecificGenes[2, ], adj = c(1, -0.2), frame = "r", bg="pink")
 tiplabels(uniqueInSpecies,adj=c(1,0.5),frame="r",bg="pink")
@@ -149,3 +154,11 @@ heatmap.2(nPairsFilt,scale = "none", trace="none", key=F,
           cellnote=signif(nPairsFilt/1000,3),notecol="black")
 
 ```
+
+### Missing in Lolium falster
+The lolium falster (LoPeF) assembly seems to be missing a lot of transcripts that the other species have. The plot below shows the number of groups where a single species is missing and what species is missing.
+
+```{r singleMissing, echo=FALSE}
+barplot(colSums(!hasOrtho[apply(hasOrtho,1,sum)==10, ]),las=2,main="Groups with a single missing species")
+```
+

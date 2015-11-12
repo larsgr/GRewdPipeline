@@ -1,0 +1,212 @@
+---
+title: "GenesOfInterest3"
+output: html_document
+---
+
+
+Expression profiles for selected genes
+
+```{r loadLibraries, echo=FALSE,message=FALSE}
+library(stringr)
+source("/mnt/users/lagr/networkSimilarity/R/loadOrthoGroups.R")
+library(knitr)
+library(readr)
+library(dplyr)
+projectDir <- "/mnt/users/lagr/GRewd/pipeline"
+```
+
+
+```{r loadData, echo=FALSE, cache=TRUE}
+pipelineOutDir <- "/mnt/NOBACKUP/mariansc/share"
+grps <- loadOrthoGrpsArray(orthoGrpFile = file.path(pipelineOutDir,"orthos/orthoMCL/groups.txt"))
+
+tblDir <- file.path(pipelineOutDir,"orthos/exprTbls")
+
+# read full expression tables
+files <- dir(tblDir,pattern="_full_expected_countTbl.txt",full.names = T)
+
+# hack to make readr read tables with row names:
+myReadTable <- function(filename){
+  header <- scan(file = filename,nlines = 1,what = character(0))
+  tbl <- read_tsv(filename,skip = 1,col_names = c("geneID",header),
+                  col_types = c(list(col_character()), rep(list(col_double()),length(header)) ))
+  geneIDs <- tbl$geneID
+  tbl <- tbl[,header]
+  rownames(tbl) <- geneIDs
+  return(tbl)
+}
+
+exprCnt <- lapply(setNames(files,str_extract(basename(files),"^[^_]+")), 
+                  myReadTable)
+
+
+# remove WC samples, cast to matrix and log transform
+lapply(exprCnt, function(X){
+  m <- log2( 1+as.matrix( X[ , !grepl("^wc_",names(X)) ] ) )
+  rownames(m) <- rownames(X)
+  return(m)
+}) -> expr
+
+spcs <- names(exprCnt)
+spcs <- setNames(spcs,spcs)
+
+# Skip MeNu2 because RSEM is not of same assembly as the ortholog grps!!!
+spcs <- spcs[-4]
+
+spcsAll <- c(Bd_R="Bd_R",Hv_R="Hv_R",spcs)
+
+# get number of genes per species per group
+lens <- unlist(lapply(grps,length))
+dim(lens) <- dim(grps)
+dimnames(lens) <- dimnames(grps)
+
+```
+
+
+```{r GenesOfInterest3, echo=F, results="asis"}
+
+# load blastresults
+bresFiles <- dir(file.path(projectDir,"indata/GenesOfInterest3"),
+                 pattern = "\\.blastn",full.names = T)
+bresFiles <- setNames(bresFiles,gsub("\\.blastn","",
+                                     gsub("GenesOfInterest_","",basename(bresFiles))))
+
+bres <- lapply(bresFiles, function(bresFile){
+  read.table(bresFile,col.names = c("qseqid", "sseqid", "pident", "length", "mismatch",
+                                  "gapopen", "qstart", "qend", "sstart", "send",
+                                  "evalue", "bitscore"), stringsAsFactors= F)
+})
+
+annotTbl <- read_tsv(file.path(projectDir,"indata/GenesOfInterest3/GenesOfInterest.txt"))
+
+tbl <- annotTbl[ annotTbl$X=="x", c("FASTA_name","working_name","Annotation","Brdi_accession","species")]
+
+# get best hit in Bd_R
+tbl$bestBd_R <- bres$Bd_R$sseqid[match(tbl$FASTA_name, bres$Bd_R$qseqid)]
+
+# get best hit per species
+sapply(spcs, function(spc){
+  bres[[spc]]$sseqid[match(tbl$FASTA_name, bres[[spc]]$qseqid)]
+}) -> bestHit
+rownames(bestHit) <- tbl$working_name
+
+bestHit <- gsub("_i.+$","",gsub("|","_",bestHit, fixed = T))
+
+# Define groups based on bestHit and merge with grps
+myGrps <- as.list(cbind( Bd_R=rep(NA,nrow(bestHit)),
+                         bestHit[,c("BrDi","HoVu")],
+                         Hv_R=rep(NA,nrow(bestHit)),
+                         bestHit[,"MeNu1"],
+                         MeNu2=rep(NA,nrow(bestHit)),
+                         bestHit[,c("NaSt","StLa")]))
+myGrps[is.na(myGrps)] <- list(NULL)
+myGrps <- as.array(myGrps)
+dim(myGrps) <- c(nrow(bestHit),ncol(grps))
+colnames(myGrps) <- colnames(grps)
+rownames(myGrps) <- paste0("grp",rownames(bestHit))
+
+# merge to grps2/lens2
+grps2 <- rbind(grps,myGrps)
+lens2 <- unlist(lapply(grps2,length))
+dim(lens2) <- dim(grps2)
+dimnames(lens2) <- dimnames(grps2)
+
+
+# get best group per query for each species
+
+sapply(spcsAll, function(spc){
+  # flatten group list so that we can look up grp given geneID
+  flat <- unlist(grps[,spc])
+  grpflat <- rep(rownames(grps),lens[,spc])
+  # copy blast table and add converted geneIDs
+  tmpbres <- bres[[spc]]
+  tmpbres$GeneID <- gsub("_i.+$","",gsub("\\|","_",tmpbres$sseqid))
+  # find groups for each geneID
+  tmpbres$grp <- grpflat[match(tmpbres$GeneID,flat)]
+  # remove hits without groups
+  tmpbres <- tmpbres[ !is.na(tmpbres$grp), ]
+  # select first grp (best hit) for each query
+  return(tmpbres$grp[match(tbl$FASTA_name, tmpbres$qseqid)])
+}) -> bestGrp
+rownames(bestGrp) <- tbl$FASTA_name
+
+
+
+tmpTbl <- data.frame(Gene=tbl$working_name,
+                     Species=tbl$species,
+                     Annotation=tbl$Annotation,
+                     BestHits=rownames(myGrps),
+                     Brdi_accession=tbl$Brdi_accession,
+                     bestBd_R=ifelse(is.na(tbl$bestBd_R),"",tbl$bestBd_R),
+                     stringsAsFactors = F)
+tmpTbl$BestHits <- sprintf('[%s](#%s)',tmpTbl$BestHits,tmpTbl$BestHits) # link to plot
+kable(tmpTbl,row.names = F)
+
+# make table for the best matching groups per gene in each species
+tmpTbl <- bestGrp
+tmpTbl <- apply(tmpTbl,2,function(x) {ifelse(is.na(x),"",sprintf('[%s](#%s)',x,x))})
+tmpTbl <- as.data.frame(tmpTbl,stringsAsFactors = F)
+rownames(tmpTbl) <- tbl$working_name
+kable(tmpTbl)
+
+
+grpsOfInterest <- c(rownames(myGrps),unique(bestGrp[!is.na(bestGrp)]))
+
+```
+
+
+
+
+```{r plotGroupsOfInterest, echo=FALSE,fig.height=2.5,fig.width=9, results="asis"}
+
+
+# grp = grpsOfInterest[1]
+# spc = spcs[2]
+
+
+layout(matrix(c(1:length(spcs)), 1, length(spcs), byrow = T),
+   widths=rep(2,length(spcs)), heights=c(2.5))
+par(mar=c(5, 3, 4, 0))
+TtoX <- c(T0=1,T1=2,T3=3,T4=4)
+
+for(grp in grpsOfInterest){
+  cat(sprintf('\n\n<a name="%s"/>\n',grp)) # link anchor
+
+  #
+  cat("<div>",grp,"</div>")
+  
+  # check if the group has any orthologs in out transcriptomes
+  if( sum(lens2[grp,spcs]) == 0 ){
+    cat("No orthologs!")
+    next
+  }
+
+  # get same scale for all species
+  ylim <- range(unlist(lapply(spcs,function(spc){expr[[spc]][grps2[[grp,spc]],]})))
+    
+  for(spc in spcs){
+    genes <- grps2[[grp,spc]]
+    
+    expCnt <- expr[[spc]][genes, ,drop=FALSE]
+
+    plot(x=NULL,xaxt="n",main=spc,xlab="",xlim=range(TtoX),
+         ylim=ylim)
+    if(spc==spcs[1])title(ylab="log2(expCnt+1)",line=2)
+    axis(1,at=TtoX,labels=names(TtoX)) 
+    timePoint = str_extract(colnames(expCnt),"T[0-4]")
+    cols <- rainbow(length(genes))
+    for( i in seq_along(genes) ) {
+      points(x=TtoX[timePoint],y=expCnt[i,], col=cols[i])
+      xMean <- tapply(as.numeric(expCnt[i,]),timePoint,mean)
+      lines(x=TtoX[names(xMean)],y=xMean, col=cols[i])
+    }
+  }
+}
+
+# reset graphics parameters
+layout(1)
+par(mar=c(5, 4, 4, 2) + 0.1)
+
+```
+
+

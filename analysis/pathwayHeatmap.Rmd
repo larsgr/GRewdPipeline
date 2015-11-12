@@ -1,0 +1,240 @@
+---
+title: "PathwayHeatmap"
+output: html_document
+---
+
+```{r loadLibraries, echo=F, message=F}
+library(DESeq2)
+
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+
+```{r loadData, echo=FALSE, cache=T}
+# load DE results
+load("/mnt/NOBACKUP/mariansc/share/orthos/DESeq/DE.RData")
+
+grps <- loadOrthoGrpsArray("/mnt/NOBACKUP/mariansc/share/orthos/orthoMCL/groups.txt")
+
+lens <- sapply(grps,length)
+dim(lens) <- dim(grps)
+dimnames(lens) <- dimnames(grps)
+```
+
+### Pathway data
+
+Pathways were downloaded from: 
+http://plantreactome.gramene.org/download/gene_ids_by_pathway_and_species.tab
+
+The list contains 201 pathways with gene ID's for all of our reference species, except that the gene ID's were not compatible for Rice and about half of the Barley gene ID's.
+
+Ortholog groups were assigned a pathway if any of the reference orthologs were in the pathway list. Totally 572 groups were assigned to 170 pathways.
+
+```{r loadPathways, echo=F, cache=T}
+pathwaysFile <- "/mnt/NOBACKUP/mariansc/share/refGenomes/gene_ids_by_pathway_and_species.tab"
+pathwaysFileSource <- "http://plantreactome.gramene.org/download/gene_ids_by_pathway_and_species.tab"
+
+if(!file.exists(pathwaysFile)){
+  download.file(pathwaysFileSource, destfile=pathwaysFile)
+}
+
+tbl <- read.table(pathwaysFile, sep="\t", stringsAsFactors=F, quote = "",
+                  col.names = c("pathwayID","annot","species","geneID"))
+
+spcName <- list(Zm_R="Zea mays",
+                Hv_R="Hordeum vulgare",
+                Bd_R="Brachypodium distachyon",
+                Sb_R="Sorghum bicolor")
+
+
+geneIDconvFun <- list(
+  Bd_R = function(geneID){ sub("\\.[0-9]+$","",toupper(geneID)) },
+  Hv_R = function(geneID){ sub("\\.[0-9]+$","",geneID) },
+  Zm_R = function(geneID){ sub("_P[0-9]+$","",geneID) },
+  Sb_R = function(geneID){ sub("\\.[0-9]+$","",geneID) }
+)
+
+geneIDs2grpIDs <- function(geneIDs, spc){
+  flatGrpIDs <- rep(rownames(grps),sapply(grps[ ,spc],length))
+  spcGeneIDs <- geneIDconvFun[[spc]](unlist(grps[,spc],use.names = F))
+      
+  flatGrpIDs[match(geneIDs,spcGeneIDs)]
+}
+
+# remove entries with other species
+tbl <- tbl[ tbl$species %in% unlist(spcName),]
+
+tbl$grpID=NA # add grpID column
+
+for( spc in names(geneIDconvFun)){
+  idx <- tbl$species==spcName[[spc]]
+
+  tbl$grpID[idx] <- geneIDs2grpIDs(tbl$geneID[idx],spc)
+}
+
+# remove gprID na's
+tbl <- tbl[!is.na(tbl$grpID),]
+
+# # Sanity check on the pathways:
+# 
+# # how many different grps per pathway?
+# table(tapply(tbl$grpID,tbl$annot,function(grpIDs){length(unique(grpIDs))}))
+# 
+# # how many different pathway per grp?
+# table(tapply(tbl$annot,tbl$grpID,function(pathwayID){length(unique(pathwayID))}))
+# 
+# # How many groups overlap between species in each pathway
+# spcs <- setNames(names(geneIDconvFun),names(geneIDconvFun))
+# sapply(spcs, function(spc1){
+#   idx1 <- tbl$species==spcName[[spc1]]
+#   pathwayAnnot1 <- unique(tbl$annot[idx1])
+#   sapply(spcs, function(spc2){
+#     # calculate overlap between spc1 and spc2
+#     idx2 <- tbl$species==spcName[[spc2]]
+#     tmpTbl <- tbl[idx1 | idx2 & tbl$annot %in% pathwayAnnot1, ]
+#     tapply(1:nrow(tmpTbl),tmpTbl$annot, function(i){
+#       with(tmpTbl[i, ],{
+#         grps1 <- grpID[species==spcName[[spc1]]]
+#         grps2 <- grpID[species==spcName[[spc2]]]
+#         length(intersect(grps1,grps2))/length(unique(grps1))
+#       })
+#     }) -> x
+#     return( mean(x) )
+#   })
+# }) -> pathwayOverlapMatrix
+```
+
+```{r calcSig, echo=F, cache=T}
+# get grpIDs of significant genes
+lapply(c(ramp="resRamp",peak="resPeak"),function(eff){
+  lapply(c(up=1,down=-1),function(direction){
+    lapply(setNames(names(DE),names(DE)), function(spc){
+      with(DE[[spc]][[eff]], {
+        (padj<0.05) * sign(log2FoldChange) * (abs(log2FoldChange)>1)
+      }) -> sig
+      sig[is.na(sig)] <- 0
+      
+      flatGrpIDs <- rep(rownames(grps),lens[ ,spc])
+      spcGeneIDs <- unlist(grps[,spc])
+      
+      sigGeneIDs <- rownames(DE[[spc]][[eff]])[sig==direction]
+      sigGrpIDs <- flatGrpIDs[match(sigGeneIDs,spcGeneIDs)]
+      
+      return( unique(sigGrpIDs))
+    })
+  }) 
+}) -> sigGrpIds
+
+
+pathwayGrpIDs <- tapply(tbl$grpID,tbl$annot,unique)
+
+# count number of significant groups per pathway
+lapply(sigGrpIds,lapply,lapply,function(sigGrpID){
+  sapply(pathwayGrpIDs, function(grpIDs){
+    sum(sigGrpID %in% grpIDs)
+  })
+}) -> nSigGrpsPerPathway
+
+nGrpsPerPw <- sapply(pathwayGrpIDs,length)
+
+idxTopPathways <- order(nGrpsPerPw,decreasing = T)[1:sum(nGrpsPerPw>4)]
+```
+
+```{r plot_nGrpsPerPw, echo=F}
+plot(table(nGrpsPerPw),xlab="Groups per pathway",ylab="Number of pathways")
+```
+
+
+### Heatmap significant peak up per pathway
+
+The following heatmap shows the proportion of groups per pathway which have atleast one significant DEG (P.adj < 0.05, lfc > 1). Darker means higher proportion of significant groups. Only pathways with 5 or more groups are included (small to large from top to bottom)
+
+```{r plotHeatmapPeakUp, echo=F, fig.height=7}
+sigUpProp <- sapply(nSigGrpsPerPathway$peak$up,"/",nGrpsPerPw)
+heatmap(sigUpProp[idxTopPathways, ], Rowv = NA,
+        Colv=NA, scale = "none",margins =c(5,12),
+        col=colorRampPalette(RColorBrewer::brewer.pal(n=9,name = "Blues"))(100),breaks=seq(0,1,by = 0.01))
+```
+
+### Heatmap significant ramp up per pathway
+
+Same as above but with ramp effect.
+
+```{r plotHeatmapRampUp, echo=F, fig.height=7}
+sigUpProp <- sapply(nSigGrpsPerPathway$ramp$up,"/",nGrpsPerPw)
+heatmap(sigUpProp[idxTopPathways, ], Rowv = NA,
+        Colv=NA, scale = "none",margins =c(5,12),
+        col=colorRampPalette(RColorBrewer::brewer.pal(n=9,name = "Blues"))(100),breaks=seq(0,1,by = 0.01))
+```
+
+### Heatmap significant peak+ramp up per pathway
+
+Same as above but with either significant peak or ramp effect.
+
+```{r plotHeatmapPeakRampUp, echo=F, fig.height=7}
+lapply(c(up=1,down=-1),function(direction){
+  lapply(setNames(names(DE),names(DE)),function(spc){
+    sapply(pathwayGrpIDs, function(grpIDs){
+      sum( union(sigGrpIds$peak[[direction]][[spc]],
+                 sigGrpIds$ramp[[direction]][[spc]]) %in% grpIDs)
+    })
+  })
+}) -> nSigGrpsPerPwRampPeak
+  
+
+    
+sigUpProp <- sapply(nSigGrpsPerPwRampPeak$up,"/",nGrpsPerPw)
+heatmap(sigUpProp[idxTopPathways, ], Rowv = NA,
+        Colv=NA, scale = "none",margins =c(5,12),
+        col=colorRampPalette(RColorBrewer::brewer.pal(n=9,name = "Blues"))(100),breaks=seq(0,1,by = 0.01))
+```
+
+### Permutation test on pathway significance (peak up)
+
+Want to know if using the pathway information increases the proportion of significant genes across all species. For each pathway:  
+H0: The total number of significant orthologs is same in the set of N groups in a pathway as when picking N random groups  
+H1: The total number of significant orthologs is higher in the set of N groups in a pathway than if picking N random groups
+
+Random groups were sampled from the 572 groups that have been assigned to a pathway.
+
+Following are heatmaps for each of the significant pathways (p<0.05, N>4). The heatmaps show which species in each group of the assigned to the pathway that have significant peak up effect (dark=significant).
+
+```{r permutTest, echo=FALSE}
+# calculate total number of significant per grp (sum accross species)
+allGrpIDs <- unique(tbl$grpID)
+sapply(sigGrpIds$peak$up,function(grpIDs){
+  allGrpIDs %in% grpIDs
+}) -> sigInGrp
+rownames(sigInGrp) <- allGrpIDs
+
+sigPerGrp <- rowSums(sigInGrp)
+
+# calculate total number of significant per pathway (sum accross species)
+nSigUp <- Reduce("+",nSigGrpsPerPathway$peak$up)
+
+# random sample n grps and calculate sum of sigPerGrp
+sapply(setNames(unique(nGrpsPerPw),unique(nGrpsPerPw)),function(n){
+  sapply(1:10000,function(i){
+    sum(sample(sigPerGrp, size=n))
+  })  
+}) -> x
+
+# Compare nSigUp with randomly sampled of same size
+sapply(seq_along(nSigUp), function(i){
+  mean(nSigUp[i] < x[ ,as.character(nGrpsPerPw[i])])  
+}) -> pValSigUp
+
+
+
+idxSig <- which(pValSigUp<0.05 & nGrpsPerPw>4)
+
+
+for( i in idxSig){
+heatmap(ifelse(sigInGrp[pathwayGrpIDs[[i]], ],1,0), Rowv = NA,
+        Colv=NA, scale = "none",margins =c(5,12),
+        col=colorRampPalette(RColorBrewer::brewer.pal(n=9,name = "Blues"))(100),breaks=seq(0,1,by = 0.01),
+        main=paste(names(nGrpsPerPw)[i]," P =",pValSigUp[i]))
+}
+
+```
+

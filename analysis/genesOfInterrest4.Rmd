@@ -1,0 +1,163 @@
+---
+title: "Expression profile - Genes of interrest"
+output:
+  html_document:
+    theme: spacelab
+---
+
+
+
+```{r loadLibraries, echo =FALSE}
+library(stringr)
+source("/mnt/users/lagr/GRewd/pipeline/R/orthoGrpTools.R")
+library(knitr)
+```
+
+
+```{r loadData, echo=FALSE, cache=TRUE}
+# define paths:
+pipelineOutDir <- "/mnt/NOBACKUP/mariansc/share"
+blastOutFile <- "/mnt/users/lagr/GRewd/pipeline/indata/GenesOfInterest4/GenesOfInterest_vs_allProteomes.blastp"
+annotTblFile <- "/mnt/users/lagr/GRewd/pipeline/indata/GenesOfInterest4/GenesOfInterest.txt"
+
+# load expression data (inside DE results)
+load(file.path(pipelineOutDir,"orthos/DESeq/DE.RData"))
+
+
+# read "genes of interest" table
+geneTable <- readr::read_tsv(annotTblFile)
+
+
+# loading blast results...
+bres <- readr::read_tsv(file = blastOutFile,
+                        col_names = c("qseqid", "sseqid", "pident", "length", 
+                                      "mismatch", "gapopen", "qstart", "qend",
+                                      "sstart", "send", "evalue", "bitscore"))
+
+
+# load groups
+grpsTbl <- loadOrthoGrpsTable(orthoGrpFile = file.path(pipelineOutDir,"orthos/orthoMCL/groups.txt"))
+grps <- OrthoGrpTableToArray(grpsTbl)
+
+# goodGrpsTbl <- loadOrthoGrpsTable(file.path(pipelineOutDir,"orthos/splitGroups/goodGroups.txt"))
+# goodGrps <- OrthoGrpTableToArray(goodGrpsTbl)
+
+```
+
+```{r defFunctions, echo=FALSE}
+getExpr <- function( spc, seqIDs){
+  DE[[spc]]$vst[seqIDs, ,drop=F]
+}
+
+spcsExpr <- names(DE) # defines which species to plot profiles for
+
+plotProfiles <- function(grp, getLty=function(spc,genes){1}){
+  if(length(unlist(grp))==0)
+    return
+  
+  layout(matrix(c(1:length(spcsExpr)), 1, length(spcsExpr), byrow = T),
+         widths=rep(2,length(spcsExpr)), heights=c(2.5))
+  par(mar=c(5, 3, 4, 0))
+  TtoX <- c(`T-1`=0,T0=1,T1=2,T3=3,T4=4)
+
+  
+  # get same scale for all species
+#   ylim <- range(unlist(lapply(spcs,function(spc){expr[[spc]][grp[[spc]],]})))
+  ylim <- c(0,15)
+  
+  for(spc in spcsExpr){
+    genes <- grp[[spc]]
+    
+#     expCnt <- expr[[spc]][genes, ,drop=FALSE]
+
+    expCnt <- getExpr(spc,genes)
+    
+    
+  
+    plot(x=NULL,xaxt="n",main=spc,xlab="",
+         xlim=range(TtoX), ylim=ylim)
+    if(spc==spcsExpr[1]){
+      title(ylab="expr. (VST)",line=2)
+    }
+    axis(1,at=TtoX,labels=names(TtoX)) 
+    timePoint = str_extract(colnames(expCnt),"T-?[0-4]")
+    cols <- rainbow(length(genes))
+    for( i in seq_along(genes) ) {
+      points(x=TtoX[timePoint],y=expCnt[i,], col=cols[i])
+      exprMean <- tapply(as.numeric(expCnt[i,]),timePoint,mean)
+      exprMean <- exprMean[order(TtoX[names(exprMean)])]
+      lines(x=TtoX[names(exprMean)],y=exprMean, col=cols[i], lty=getLty(spc,genes[i]))
+    }
+  }
+  # reset graphics parameters
+  layout(1)
+  par(mar=c(5, 4, 4, 2) + 0.1)
+}
+
+```
+
+
+```{r writeTable, echo=F, results="asis"}
+
+# get the Group IDs for the blast hits
+bres$grpID <- grpsTbl$grpID[ match(bres$sseqid, grpsTbl$seqID)]
+
+hasBres <- geneTable$PEP_name %in% unique(bres$qseqid)
+
+
+# make a table based on the genes of interrest table
+tbl <- data.frame( qseq = geneTable$PEP_name[hasBres],
+                   working_name = geneTable$working_name[hasBres],
+                   stringsAsFactors = F)
+# for each blast query get the grp with best hit
+bresSub <- !is.na(bres$grpID)
+idx <- match(tbl$qseq,bres$qseqid[bresSub])
+tbl$bestHitWithGrp <- bres$sseqid[bresSub][idx]
+tbl$grpID <- bres$grpID[bresSub][idx]
+
+# tbl$grpIDgood <- goodGrpsTbl$grpID[ match(tbl$bestHitWithGrp, goodGrpsTbl$seqID)]
+
+tbl$Annotation <- geneTable$annotation[hasBres]
+tbl$Species <- geneTable$species[hasBres]
+
+grpsOfInterrest <- data.frame( stringsAsFactors = F,
+                               grpID = unique(tbl$grpID[!is.na(tbl$grpID)]))
+# grpsOfInterrest$grpIDgood = tbl$grpIDgood[match(grpsOfInterrest$grpID,tbl$grpID)]
+grpsOfInterrest$annot = tbl$Annotation[match(grpsOfInterrest$grpID,tbl$grpID)]
+
+grpsOfInterrest$names = sapply(grpsOfInterrest$grpID,function(grpID){
+  paste(tbl$working_name[tbl$grpID %in% grpID], collapse=", ")
+  })
+
+tbl$grpID <- sprintf('[%s](#%s)',tbl$grpID,tbl$grpID) # link to plot
+
+# print the table in markdown format
+kable(tbl,row.names = F)
+```
+
+```{r plotGroupsOfInterrest, echo=FALSE,fig.height=2.5,fig.width=9, results="asis"}
+
+getGetLty <- function(grp){
+  return(function(spc,geneID){
+    return(ifelse( geneID %in% grp[[spc]], 2, 1))
+  })  
+}
+
+
+
+for(i in 1:nrow(grpsOfInterrest)){
+  grp <- grpsOfInterrest$grpID[i]
+  cat(sprintf('\n\n<a name="%s"/>\n',grp)) # link anchor
+
+#   goodGrp <- grpsOfInterrest$grpIDgood[i]
+#   if( !is.na(goodGrp) & goodGrp != grp ){
+#     cat("<div>",goodGrp,grpsOfInterrest$annot[i],"</div>")
+#     plotProfiles(grps[grp,],getLty = getGetLty(goodGrps[goodGrp,]))
+#   } else{
+    cat("<div>",grp,grpsOfInterrest$names[i],"</div>")
+    plotProfiles(grps[grp,])
+#   }
+}
+```
+
+

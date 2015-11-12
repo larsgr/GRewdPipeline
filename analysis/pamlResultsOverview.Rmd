@@ -1,0 +1,367 @@
+---
+title: "Paml results overview"
+output: html_document
+---
+
+
+```{r loadLibraries, echo=FALSE, message=FALSE}
+library(DESeq2)
+library(gplots)
+library(stringr)
+
+
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+```{r loadData, echo=FALSE}
+orthoPath <- "/mnt/NOBACKUP/mariansc/share/orthos"
+
+
+pamlResFile<-"~/GRewd/pipeline/data/pamlRes.RDS"
+DEnewFile<-"~/GRewd/pipeline/data/DEnew.RDS"
+VSTnewFile<-"~/GRewd/pipeline/data/VSTnew.RDS"
+superExprMatrixFile <- "~/GRewd/pipeline/data/superExprMatrix.RDS"
+
+# load DE
+load(file.path(orthoPath,"DESeq/DE.RData"))
+
+# load superGenes expression
+expr <- readRDS(file = superExprMatrixFile)  
+# load DE based and vst based on superGenes
+DEnew <- readRDS(DEnewFile)  
+vst <- readRDS(VSTnewFile)  
+
+
+# convert DE results to matrix format
+lapply( list( peak="resPeak", ramp="resRamp"), function( peakOrRamp ){
+  lapply( list( pVal="pvalue", pAdj="padj", stat="stat",lfc="log2FoldChange"), function( stat ){
+    m <- sapply(DEnew, function(DEspc){DEspc[[peakOrRamp]][[stat]]})
+    rownames(m) <- rownames(expr)
+    return(m)
+  })
+}) -> DEmat
+
+# load groups
+grpData <- readRDS(file.path(orthoPath,"splitGroups/goodTreeStats.rds"))
+grps <- loadOrthoGrpsArray(file.path(orthoPath,"splitGroups/goodGroups.txt"))
+
+```
+
+```{r loadPAMLresults, echo=FALSE}
+if(!file.exists(pamlResFile)){
+  PAMLpath <- "/mnt/NOBACKUP/mariansc/share/orthos/PAML"
+  pamlResFiles <- dir(PAMLpath,pattern = "grp.*.out$",recursive = T,full.names = T)
+  names(pamlResFiles) <- sub(".*/(grp[0-9\\.]+_.*).out","\\1", pamlResFiles,perl=T)
+  
+  sapply(pamlResFiles,function(outFile){
+    txt <- readLines(outFile)
+    idx <- grep("lnL",txt)
+    if(length(idx)==1){
+      return(as.numeric(sub(".*(-[0-9\\.]+).*","\\1",txt[idx],perl=T)))
+    } else{
+      return(NA_real_)
+    }
+  }) -> lnL
+  
+  # make table from the names
+  tbl <- readr::read_delim(paste(names(lnL),collapse="\n"),delim="_",col_names=c("grpID","hyp","H"))
+  tbl$lnL <- lnL
+  
+  tblWide <- tidyr::spread(tbl,H,lnL)
+  tblWide$pVal <- 1-pchisq(2*(tblWide$H1-tblWide$H0),1)
+  pamlRes <- split(tblWide[,colnames(tblWide)!="hyp"],tblWide$hyp)
+  
+  pamlRes <- lapply(pamlRes,as.data.frame)
+  
+  saveRDS(pamlRes,pamlResFile)
+} else {
+  pamlRes <- readRDS(pamlResFile) 
+}
+
+# remove NA's in H4a (probably caused by trees where the core clade is on the root and can't be marked)
+pamlRes$H4a <- pamlRes$H4a[!is.na(pamlRes$H4a$pVal), ]
+
+
+# convert to matrix of p-values
+pamlMat <- sapply(pamlRes, with, {pVal[match(rownames(expr),grpID)]})
+
+```
+
+### Postive selection
+```{r pamlResPlot, echo=FALSE}
+# check how many significant there are in each hypothesis
+pamlSign <- sapply(pamlRes, with, {sum(pVal < 0.05)})
+nPaml <- sapply(pamlRes, nrow)
+barplot(pamlSign/nPaml, ylab="proportion of sign. tests (p<0.05)",main="positive selection")
+```
+
+
+### Common responses in sub-set of species
+
+#### Genes responding to cold in all pooids
+
+Which genes are up-regulated in all our five pooids as respons to cold?
+
+Method one: Select genes with p.adj<0.05 and lfc>1 in all species. Ramp and Peak effect tested individually.
+
+
+```{r echo=FALSE}
+sigMat <- lapply(DEmat, with, {pAdj < 0.05 & lfc > 1})
+
+venn(apply(sigMat$peak,2,which))
+title(main="significant peak up",sub="p.adj<0.05 & lfc>1")
+
+whichAllpeakUp <- which(apply(sigMat$peak,1,all))
+
+heatmap(DEmat$peak$stat[whichAllpeakUp,], breaks=c(-20,seq(-5.5,5.5,by=1),20),
+        col=colorRampPalette(c("green","black","red"))(13),
+        RowSideColors = ifelse(pamlMat[whichAllpeakUp,"H4a"]<0.05,"red","grey"),
+        scale="none", Rowv = NA, Colv = NA, main="Peak up in all (H4a)")
+
+venn(apply(sigMat$ramp,2,which))
+title(main="significant ramp up",sub="p.adj<0.05 & lfc>1")
+
+whichAllrampUp <- which(apply(sigMat$ramp,1,all))
+
+heatmap(DEmat$ramp$stat[whichAllrampUp,], breaks=c(-20,seq(-5.5,5.5,by=1),20),
+        col=colorRampPalette(c("green","black","red"))(13),
+        RowSideColors = ifelse(pamlMat[whichAllrampUp,"H4a"]<0.05,"red","grey"),
+        scale="none", Rowv = NA, Colv = NA, main="Ramp up in all (H4a)")
+
+```
+
+
+### Alternative way of plotting expression profiles
+
+```{r defFun, echo=FALSE}
+getExpr <- function( spc, seqIDs){
+  DE[[spc]]$vst[seqIDs, ,drop=F]
+}
+
+
+plotProfiles <- function(grp, getLty=function(spc,genes){1}){
+  if(length(unlist(grp))==0)
+    return
+
+  spcsExpr <- names(DE) # defines which species to plot profiles for
+  
+  layout(matrix(c(1:length(spcsExpr)), 1, length(spcsExpr), byrow = T),
+         widths=rep(2,length(spcsExpr)), heights=c(2.5))
+  par(mar=c(5, 3, 4, 0))
+  TtoX <- c(`T-1`=0,T0=1,T1=2,T3=3,T4=4)
+
+  
+  # get same scale for all species
+#   ylim <- range(unlist(lapply(spcs,function(spc){expr[[spc]][grp[[spc]],]})))
+  ylim <- c(0,15)
+  
+  for(spc in spcsExpr){
+    genes <- grp[[spc]]
+    
+    expCnt <- getExpr(spc,genes)    
+  
+    plot(x=NULL,xaxt="n",main=spc,xlab="",
+         xlim=range(TtoX), ylim=ylim)
+    if(spc==spcsExpr[1]){
+      title(ylab="expr. (VST)",line=2)
+    }
+    axis(1,at=TtoX,labels=names(TtoX)) 
+    timePoint = str_extract(colnames(expCnt),"T-?[0-4]")
+    cols <- rainbow(length(genes))
+    for( i in seq_along(genes) ) {
+      points(x=TtoX[timePoint],y=expCnt[i,], col=cols[i])
+      exprMean <- tapply(as.numeric(expCnt[i,]),timePoint,mean)
+      exprMean <- exprMean[order(TtoX[names(exprMean)])]
+      lines(x=TtoX[names(exprMean)],y=exprMean, col=cols[i], lty=getLty(spc,genes[i]))
+    }
+  }
+  # reset graphics parameters
+  layout(1)
+  par(mar=c(5, 4, 4, 2) + 0.1)
+}
+
+plotProfiles2 <- function(grp){
+  if(length(unlist(grp))==0)
+    return
+
+  spcsExpr <- names(DE) # defines which species to plot profiles for
+  
+  layout(matrix(c(1:(2*length(spcsExpr))), 2, length(spcsExpr), byrow = F),
+         widths=rep(2,length(spcsExpr)), heights=c(1.3,1.3))
+  par(mar=c(5, 3, 4, 0))
+  
+  TtoF <- c(`T-1`="ramp",T0="peak",T1="peak",T3="ramp",T4="ramp")    
+  TtoX <- c(`T-1`=0,T0=0,T1=1,T3=1,T4=1)
+  FtoCol <- c(ramp="red",peak="blue")
+  
+  # get same scale for all species
+  
+  for(spc in spcsExpr){
+
+    genes <- grp[[spc]]
+    
+    expCnt <- getExpr(spc,genes)    
+
+    timePoint = str_extract(colnames(expCnt),"T-?[0-4]")
+    xf <- as.factor(paste0(TtoF[timePoint],TtoX[timePoint]))
+    exprMean <- tapply(as.numeric(expCnt),rep(xf,each=nrow(expCnt)),function(lgCnt){
+      log2(mean(2^lgCnt))
+    })
+    
+    for( peakRamp in c("peak","ramp")){
+      idx <- TtoF[timePoint]==peakRamp
+      col <- FtoCol[peakRamp]
+      
+      if( peakRamp=="peak"){
+        ymean <- exprMean[c("peak0","peak1")]
+      } else{
+        if("ramp0" %in% names(exprMean))
+          ymean <- exprMean[c("ramp0","ramp1")]
+        else
+          ymean <- exprMean[c("peak0","ramp1")]
+      }
+      
+      ylim <- c(-2,2)+mean(ymean)
+      
+      plot(x=NULL,xaxt="n",main=spc,xlab="",
+           xlim=range(TtoX), ylim=ylim)
+      title(sub=peakRamp,line=2)
+
+      if(spc==spcsExpr[1]){
+        title(ylab="expr. (VST)",line=2)
+      }
+      axis(1,at=c(0,1),labels=c("ref","cold")) 
+      
+      for( i in seq_along(genes) ) {
+        points(x=TtoX[timePoint][idx],y=expCnt[i,idx], col=col)
+      }
+      
+      lines(x=c(0,1),y=ymean, col=col)
+    }
+  }
+  # reset graphics parameters
+  layout(1)
+  par(mar=c(5, 4, 4, 2) + 0.1)
+}
+
+```
+
+#### profile for grp100339.1 (peak up in all)
+```{r echo=FALSE}
+plotProfiles2(grps["grp100339.1", ])
+```
+
+#### profile for grp101184.1 (ramp up in all)
+```{r echo=FALSE}
+plotProfiles2(grps["grp101184.1", ])
+```
+
+
+```{r echo=FALSE,eval=FALSE}
+#Method two: The average test statistic in each species is greater than 0
+
+lapply(DEmat, with, {apply(ifelse(stat>5,5,stat), 1, function(x){
+  t.test(x,alternative="greater")$p.value})
+}) -> pValMethod2
+
+dim(DEmat$peak$stat)
+range(ifelse(DEmat$peak$stat>5,5,DEmat$peak$stat))
+lapply(DEmat, with, {apply(stat, 1, function(x){
+  t.test(x,alternative="greater")$p.value})
+}) -> pValMethod3
+
+table(pValMethod2$peak<0.05,pValMethod3$peak<0.05)
+pValMethod2$peak
+t.test(c(5,5,5,5,4),alternative = "greater")
+
+table(p.adjust(pValMethod2$peak,method="BH")<0.05)
+```
+
+
+
+
+```{r ttestOnStat, echo=FALSE,cache=TRUE}
+apply(DEmat$ramp$stat,1,function(statRow){
+  res <- t.test(x = statRow[1:2],y = statRow[3:5],alternative = "greater")
+  return(c(pVal=res$p.value, tStat=res$statistic))
+}) -> rampCoreVsBasalttest
+
+apply(DEmat$peak$stat,1,function(statRow){
+  res <- t.test(x = statRow[1:2],y = statRow[3:5],alternative = "greater")
+  return(c(pVal=res$p.value, tStat=res$statistic))
+}) -> peakCoreVsBasalttest
+
+# cor.test(rampCoreVsBasalttest["tStat.t", ], peakCoreVsBasalttest["tStat.t", ])
+# 
+# apply(cbind(statMatrixPeak,statMatrixRamp),1,function(statRow){
+#   res <- t.test(x = statRow[c(1:2,6:7)],y = statRow[c(3:5,8:10)],alternative = "greater")
+#   return(c(pVal=res$p.value, tStat=res$statistic))
+# }) -> comboCoreVsBasalttest
+# 
+# hist(comboCoreVsBasalttest["pVal",])
+# table(p.adjust(comboCoreVsBasalttest["pVal",],method = "fdr")<0.1)
+
+
+# hist(peakCoreVsBasalttest["pVal",])
+# table(p.adjust(peakCoreVsBasalttest["pVal",],method = "fdr")<0.1)
+# hist(rampCoreVsBasalttest["pVal",])
+# table(p.adjust(rampCoreVsBasalttest["pVal",],method = "fdr")<0.1)
+
+```
+
+### Core specific response
+
+
+```{r ploth4b, echo=FALSE}
+
+idx <- order(rampCoreVsBasalttest["tStat.t",],decreasing = T)[1:40]
+
+heatmap(DEmat$ramp$stat[idx,], breaks=c(-20,seq(-5.5,5.5,by=1),20),
+        col=colorRampPalette(c("green","black","red"))(13),
+        RowSideColors = ifelse(pamlMat[idx,"H4a"]<0.05,"red","grey"),
+        scale="none", Colv = NA,main="Ramp up in core (H4b)")
+
+idx <- order(peakCoreVsBasalttest["tStat.t",],decreasing = T)[1:40]
+
+heatmap(DEmat$peak$stat[idx,], breaks=c(-20,seq(-5.5,5.5,by=1),20),
+        col=colorRampPalette(c("green","black","red"))(13),
+        RowSideColors = ifelse(pamlMat[idx,"H4a"]<0.05,"red","grey"),
+        scale="none", Colv = NA,main="Peak up in core (H4b)")
+
+# 
+# i=1
+# i=i+1
+# grpIDs[i]
+# plotProfiles2(grp=grps[grpIDs[i],])
+# statMatrix[grpIDs[i], ]
+# 
+
+
+# correlate H4b (positive selection in root of core clade) with t-test
+
+# cor(statMatrix)
+# sum(tStat < 0.05)
+# 
+# grpIDsInBoth <- rownames(expr)[rownames(expr) %in% H4b$grpID[!is.na( H4b$pVal )]]
+# 
+# cor.test(x=tStat[match(grpIDsInBoth, rownames(expr))],
+#     y=as.numeric(H4b$pVal[match(grpIDsInBoth,H4b$grpID)] < 0.05))
+# range(-log10(H4b$pVal[match(grpIDsInBoth,H4b$grpID)]))
+# table(H4b$pVal[match(grpIDsInBoth,H4b$grpID)] == 0)
+# 
+# table(is.na(-log10(H4b$pVal)[grpIDsInBoth]))
+# 
+# tStat[rownames(expr)[idx] %in% ]
+# 
+# grpIDsByH4b <- H4b$grpID[order(H4b$pVal)]
+# grpIDsByH4b <- sample(H4b$grpID[order(H4b$pVal)])
+# grpIDsTopByH4b <- grpIDsByH4b[grpIDsByH4b %in% rownames(statMatrix)][1:40]
+# 
+# heatmap(statMatrix[grpIDsTopByH4b,], breaks=c(-20,seq(-5.5,5.5,by=1),20),
+#         col=colorRampPalette(c("green","black","red"))(13),
+#         RowSideColors = ifelse(H4b[grpIDsTopByH4b,"pVal"]<0.05,"red","grey"),
+#         scale="none", Rowv = NA)
+
+```
+
+

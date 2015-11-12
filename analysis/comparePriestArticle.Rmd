@@ -1,0 +1,177 @@
+---
+title: "Compare Brachy Cold response genes with Priest et al. article"
+output: html_document
+---
+
+
+The article in question: [Analysis of Global Gene Expression in Brachypodium distachyon Reveals Extensive Network Plasticity in Response to Abiotic Stress](http://www.ncbi.nlm.nih.gov/pubmed/24489928)
+
+## tl;dr:
+
+Brachypodium was subject to four kinds of stress (cold, heat, salt and drought). Gene expression was measured at 1, 2, 5, 10 and 24 hours after applied stress. They generated a co-expression network from the data and identified 22 "modules" of genes with similar expression profiles where modules 18 and 21 was identified as cold-responsive (See [figure 3 in the article](http://www.ncbi.nlm.nih.gov/pmc/articles/PMC3906199/figure/pone-0087499-g003/)).
+
+The genelists for all the modules was downloaded from [supplementary file S1](http://www.ncbi.nlm.nih.gov/pmc/articles/PMC3906199/bin/pone.0087499.s004.xls).
+
+```{r loadLibraries, echo =FALSE, message=FALSE}
+library(gplots)
+library(DESeq2)
+source("/mnt/users/lagr/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+```{r loadData, echo=FALSE}
+# define paths:
+pipelineOutDir <- "/mnt/NOBACKUP/mariansc/share"
+moduleFilesPath <- "/mnt/users/lagr/GRewd/pipeline/indata/BrachyStressModules"
+
+# load coldGenes
+coldGenesTbl <- readRDS("~/GRewd/pipeline/analysis/coldGenesTbl.RDS")
+
+# load expression data (inside DE results)
+load(file.path(pipelineOutDir,"orthos/DESeq/DE.RData"))
+
+
+
+# load groups
+grps <- loadOrthoGrpsArray(orthoGrpFile = file.path(pipelineOutDir,"orthos/orthoMCL/groups.txt"))
+
+lens <- sapply(grps,length)
+dim(lens) <- dim(grps)
+dimnames(lens) <- dimnames(grps)
+
+# load geneIDs from the article
+moduleFiles <- dir(moduleFilesPath,pattern="csv$",full.names = T)
+names(moduleFiles) <- sub("\\.csv","",basename(moduleFiles))
+
+
+lapply(moduleFiles, function(fil){
+  read.csv(fil,stringsAsFactors=F)[,1]
+}) -> moduleGeneIDs
+
+
+```
+
+```{r calcSigGrps, echo=FALSE}
+# get grpIDs of significant genes
+lapply(c(ramp="resRamp",peak="resPeak"),function(eff){
+  lapply(c(up=1,down=-1),function(direction){
+    lapply(setNames(names(DE),names(DE)), function(spc){
+      with(DE[[spc]][[eff]], {
+        (padj<0.05) * sign(log2FoldChange) * (abs(log2FoldChange)>1)
+      }) -> sig
+      sig[is.na(sig)] <- 0
+      
+      flatGrpIDs <- rep(rownames(grps),lens[ ,spc])
+      spcGeneIDs <- unlist(grps[,spc])
+      
+      sigGeneIDs <- rownames(DE[[spc]][[eff]])[sig==direction]
+      sigGrpIDs <- flatGrpIDs[match(sigGeneIDs,spcGeneIDs)]
+      
+      return( unique(sigGrpIDs))
+    })
+  }) 
+}) -> sigGrpIds
+```
+
+## Comparing the genes with our cold-responsive genes
+
+```{r compareModuleGenes, echo=FALSE}
+
+# map the module geneIDs to grpIDs
+noIsoBdRgenes <- sub("\\.[0-9]+$","",unlist(grps[,"Bd_R"]))
+grpsFlatBdR <- rep(rownames(grps),lens[,"Bd_R"])
+
+lapply(moduleGeneIDs, function(geneIDs){
+  ret <- grpsFlatBdR[match(geneIDs,noIsoBdRgenes)]
+  return(unique(ret[!is.na(ret)]))
+}) -> moduleGrpIDs
+
+
+# count number of
+lapply(sigGrpIds,lapply,lapply,function(sigGrpID){
+  sapply(moduleGrpIDs, function(grpIDs){
+    sum(sigGrpID %in% grpIDs)
+  })
+}) -> nSigGrpsPerModule
+
+nGrpsPerMod <- sapply(moduleGrpIDs,length)
+
+barplot(nSigGrpsPerModule$peak$up$BrDi/nGrpsPerMod,las=2,ylab="Prop. significant genes",
+        col=ifelse(grepl("21|18",names(moduleGrpIDs)),"lightblue","grey"),
+        main="BrDi peak up effect in modules")
+legend("topleft",legend="Cold responsive modules", fill ="lightblue")
+
+```
+
+## compare with all species
+The heatmap below shows the same data as the above barplot but includes all species.
+
+```{r plotHeatmap, echo=FALSE}
+# plot heatmap of prop. significant genes in modules dor each species
+sigUpProp <- sapply(nSigGrpsPerModule$peak$up,"/",nGrpsPerMod)
+
+heatmap(sigUpProp, Rowv = NA, Colv=NA, scale = "none",
+        col=colorRampPalette(RColorBrewer::brewer.pal(n=9,name = "Blues"))(100),
+        main="Prop. significant genes per module")
+
+```
+
+## Overlap of significant genes accross species
+
+
+```{r vennDiagram, echo=FALSE}
+
+coldModulesGrpIDs <- c(moduleGrpIDs$`Module 18`,moduleGrpIDs$`Module 21`)
+
+lapply(sigGrpIds,lapply,lapply,function(grpIDs){
+  grpIDs[grpIDs %in% coldModulesGrpIDs]
+}) -> sigColdModulesGrpIDs
+
+venn( data=sigColdModulesGrpIDs$peak$up[c("BrDi","HoVu","NaSt","MeNu1","StLa")])
+title( main="Significant peak effect in Modules 18 and 21",
+       sub="adj.P < 0.05, log2FC > 1")
+
+```
+
+## Compare modules with barley core cold-response genes
+
+In which module do we find the orthologs of the barley cold-responsive genes from table S10 "A core set of low-temperature responsive contigs in barley" in [Greenup et al. 2011](journals.plos.org/plosone/article?id=10.1371/journal.pone.0017900) ?
+
+
+
+```{r compareGreenup, echo=FALSE}
+
+sapply(moduleGrpIDs, function(grpIDs){
+  sum(coldGenesTbl$grpID %in% grpIDs)
+}) -> nChillGenesInModules
+
+barplot(nChillGenesInModules,las=2, main="Greenup cold genes genes per module")
+
+```
+
+```{r compareGoodGrps,echo=FALSE, eval=FALSE}
+goodGrps <- loadOrthoGrpsArray(file.path(pipelineOutDir,"orthos/splitGroups/goodGroups.txt"))
+goodTreeStats <- readRDS(file = "/mnt/NOBACKUP/mariansc/share/orthos/splitGroups/goodTreeStats.rds")
+
+# map the module geneIDs to good grpIDs
+goodNoIsoBdRgenes <- sub("\\.[0-9]+$","",unlist(goodGrps[,"Bd_R"]))
+goodGrpsFlatBdR <- rep(rownames(goodGrps),lapply(goodGrps[,"Bd_R"],length))
+
+
+lapply(moduleGeneIDs, function(geneIDs){
+  ret <- goodGrpsFlatBdR[match(geneIDs,goodNoIsoBdRgenes)]
+  return(unique(ret[!is.na(ret)]))
+}) -> moduleGoodGrpIDs
+
+sapply(moduleGoodGrpIDs, function(grpIDs){
+  sum(grpIDs %in% row.names(subset(goodTreeStats, hasAllDenovo & isCoreClan )))
+}) -> nBoringGrps
+
+sapply(1:1000, function(x){
+  rbinom(n = 22, size = nGrpsPerMod, prob = mean(nBoringGrps/nGrpsPerMod))/nGrpsPerMod
+}) -> rndMatrix
+
+boxplot(t(rndMatrix),las=2)
+
+points(nBoringGrps/nGrpsPerMod,col="red")
+```
+

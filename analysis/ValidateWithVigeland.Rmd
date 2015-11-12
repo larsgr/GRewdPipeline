@@ -1,0 +1,31 @@
+---
+title: "ValidateWithVigeland"
+output: html_document
+---
+
+
+```{r}
+
+# extract the dN/dS values
+PAMLpath <- "/mnt/NOBACKUP/mariansc/share/orthos/PAML"
+pamlResFiles <- dir(PAMLpath,pattern = "grp.*.out$",recursive = T,full.names = T)
+names(pamlResFiles) <- sub(".*/(grp[0-9\\.]+_.*).out","\\1", pamlResFiles,perl=T)
+grpIDs.pamlResFiles <- sub(".*/(grp[0-9\\.]+)_.*.out","\\1", pamlResFiles,perl=T)
+grpIDs.pamlResFiles[1:10]
+txt <- readLines(pamlResFiles[11])
+
+firstLine <- grep("Nei & Gojobori 1986. dN/dS",txt)+5
+lastLine <- firstLine + grep("^$",txt[firstLine:length(txt)])[1] - 2
+txtdNdS <- txt[firstLine:lastLine]
+seqIDs <- sub("^([^ ]+) .*","\\1",perl=T,txtdNdS)
+
+numbers <- as.numeric(unlist(stringr::str_extract_all(txtdNdS,"-?[0-9]\\.[0-9]{4}")))
+lapply(c(dNdS=1,dN=2,dS=3),function(ofs){
+  m <- matrix(0,length(seqIDs),length(seqIDs),dimnames = list(seqIDs,seqIDs))
+  m[upper.tri(m)] <- numbers[seq(ofs,to = length(numbers),by=3)]
+  t(m)
+}) -> dNdSmat
+
+plot(hclust(as.dist(dNdSmat$dN)))
+```
+

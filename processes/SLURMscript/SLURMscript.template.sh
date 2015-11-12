@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash -l
 #SBATCH -n ${ntasks}
 #SBATCH -N ${nodes}
 #SBATCH -J ${jobName}

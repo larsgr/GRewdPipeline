@@ -423,7 +423,7 @@ generateScript(pal2nalJob)
 # 5. Generate trees for the nucleotide alignments
 #
 
-arraySize = 100
+arraySize = 1000
 ArrayRJob(x = 1:arraySize, 
           outDir = file.path(orthoOutDir,"treesNuc"),
           jobName = "nucTree", 

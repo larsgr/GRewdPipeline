@@ -1,0 +1,255 @@
+---
+title: "paralogAnalysis"
+output: html_document
+---
+
+```{r loadLibraries,echo=FALSE}
+library(ape)
+library(phangorn)
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+
+```{r loadData, echo=FALSE, cache=TRUE}
+
+
+myTree <- read.tree(text = "(((((((Bd_R:1,BrDi:1):1,(Hv_R:1,HoVu:1):1):1,(MeNu1:1,MeNu2:1):2):1,StLa:4):1,NaSt:5):1,Os_R:6):1,(Zm_R:2,Sb_R:2):5):0;")
+
+
+
+
+trees <- readRDS("/mnt/NOBACKUP/mariansc/share/orthos/splitGroups/goodTrees.rds")
+grpStats <- readRDS("/mnt/NOBACKUP/mariansc/share/orthos/splitGroups/goodTreeStats.rds")
+grps <- loadOrthoGrpsArray("/mnt/NOBACKUP/mariansc/share/orthos/splitGroups/goodGroups.txt")
+
+
+# get number of genes per species per group
+lens <- unlist(lapply(grps,length))
+dim(lens) <- dim(grps)
+dimnames(lens) <- dimnames(grps)
+
+isOut <- grepl("(Os|Zm|Sb)_R",colnames(lens))
+
+```
+
+```{r defFuns, echo=FALSE}
+
+treePlot <- function(tree, ...){
+  plot.phylo(tree,show.node.label = T, 
+             tip.color = ifelse(grepl("(Os|Zm|Sb)_R",tree$tip.label),"red",
+                                ifelse(grepl("^(H|B)",tree$tip.label),"green","blue")),
+             ...)
+}
+
+treePlotU <- function(tree, ...){
+  plot.phylo(tree,show.tip.label = F,type="u",...)
+  tiplabels(pch=20,col=ifelse(grepl("(Os|Zm|Sb)_R",tree$tip.label),"red",
+                                  ifelse(grepl("^(H|B)",tree$tip.label),"green","blue")))
+}
+# Check if tips (given by logical vector isInGrp) form a clan in the tree
+isClan <- function(tree, isInGrp){
+  clans = getClans(tree)
+  any(apply(clans,1,function(clan){
+      all(clan==isInGrp)
+  }))
+}
+
+paralogHeatmap <- function (x) {
+  dRow <- dist(x,method="manhattan")
+  dendCol <- as.dendrogram(hclust(as.dist(1-cor(x))))
+  #dendRow <- as.dendrogram(hclust(as.dist(1-cor(t(x))) + 0.01*dRow))
+  
+  
+  heatmap(x, Colv = dendCol, #Rowv = dendRow,
+          scale="none",labRow = "", 
+          breaks=c(0:3,2^(2:5),1000)-0.5,
+          col=c(RColorBrewer::brewer.pal(n = 7,"Blues"),"black"))
+}
+
+```
+
+
+```{r summarizeTreesPlot, echo=FALSE, eval=FALSE}
+
+getLeaves <- function(node, tree){
+  if( node <= length(tree$tip.label)){
+    return(node)
+  } else {
+    return( unlist(lapply( tree$edge[tree$edge[,1]==node,2], getLeaves, tree)) )
+  }
+}
+
+
+summarizeTrees <- function(trees, main){
+  # remove all but the species label
+  lapply(trees,function(tree){
+    tree$tip.label <- stringr::str_extract(tree$tip.label,"^[^\\|]*")
+    return(tree)
+  }) -> ttrees
+  
+  
+  
+  nodeValidClans <- integer(0)
+  nodeValidClans2 <- integer(0)
+  nodeHasAllTips <- integer(0)
+  # for each internal node in the guide tree
+  for( node in 12:max(myTree$edge)){
+    tips <- myTree$tip.label[getLeaves(node, myTree)]
+    
+    sapply(ttrees,function(tree){
+      all(tips %in% tree$tip.label)
+    }) -> hasAllTips
+    
+    sapply(ttrees,function(tree){
+      isClan(tree, tree$tip.label %in% tips)
+    }) -> validClans
+    
+    nodeValidClans <- c(nodeValidClans,sum(validClans & hasAllTips))
+    nodeValidClans2 <- c(nodeValidClans2,sum(validClans))
+    nodeHasAllTips <- c(nodeHasAllTips,sum(hasAllTips))
+  }
+  
+  # get tip counts
+  tipClans <- integer(0)
+  tipCounts <- NULL
+  # for each tip
+  for( tip in myTree$tip.label){
+    sapply(ttrees,function(tree){
+      sum(tree$tip.label == tip)
+    }) -> nTips
+    
+    sapply(ttrees,function(tree){
+      isClan(tree, tree$tip.label == tip)
+    }) -> validClans
+    
+    tipClans <- c(tipClans,sum(nTips>1 & validClans))
+    tipCounts <- rbind(tipCounts, c(sum(nTips==0),
+                                    sum(nTips==1),
+                                    sum(nTips>1 & validClans),
+                                    sum(nTips>1 & !validClans)))
+  }
+  
+  
+  # root node always has valid clan
+  nodeValidClans2[1] <- length(ttrees)
+  nodeValidClans[1] <- nodeHasAllTips[1]
+  
+  cbind(
+    c01 = nodeValidClans2-nodeValidClans,
+    c11 = nodeValidClans,
+    c10 = nodeHasAllTips-nodeValidClans,
+    c00 = length(ttrees)-(nodeValidClans2+nodeHasAllTips-nodeValidClans)
+  )/length(ttrees) -> tipsAndClansPie
+  
+  c(
+    c01 = "#A0A0FF",
+    c11 = "#A060A0",
+    c10 = "#FFA0A0",
+    c00 = "#FFFFFF"
+  ) -> tipsAndClansPieCol
+  
+  
+  treePlot(myTree, main=main)
+  nodelabels(pie=tipsAndClansPie,piecol = tipsAndClansPieCol)
+  
+  tipPieCol <-  c("#FFFFFF", "#BAE4B3", "#74C476", "orange")
+  tiplabels(pie = tipCounts/length(ttrees), adj=0.25,
+            piecol = tipPieCol)
+  
+  legend("bottomleft",legend = c("proper clade","has all tips",
+                                 "has this tip","in-paralog",
+                                 "out-paralog"),
+         fill = c(tipsAndClansPieCol[c(1,3)],tipPieCol[-1]))
+  
+}
+
+summarizeTrees(treesSplit, 
+               main=paste0("Trees found by clanFinder (",
+                           length(treesSplit),")"))
+summarizeTrees(allTrees[isOutGroupClan], 
+               main=paste0("Trees already having out-group (",
+                           sum(isOutGroupClan),")"))
+
+```
+
+## Species specific paralogs
+
+The heatmap below shows the number of orthologs in each "species" where darker colors means more paralogs. Only ortholog groups that satisfy the following conditions are included:
+
+* Has at least 1 ortholog in each of the de-novo species
+* Has more than 1 ortholog in atleast one species
+* The core species form a separate clan
+* Each species form a separate clade (Hv_R/HoVu, Bd_R/Brdi and MeNu1/2 are considered one species)
+
+```{r paralogHeatmap, echo=FALSE, fig.height=8}
+pooids <- c("Bd_R","BrDi","Hv_R","HoVu","MeNu1","MeNu2","NaSt","StLa")
+# forgot hadParalogs... quick fix
+grpStats$hasParalogs <- apply(lens[,pooids]>1,1,any)
+idx <- with(grpStats, allSpcAreClans & hasParalogs & isCoreClan & hasAllDenovo)
+
+paralogHeatmap(lens[idx,pooids])
+title(sub=paste0("n = ",sum(idx)))
+```
+
+There is suprisingly little overlap between the reference and de-novo, and between MeNu1 and MeNu2. It would be expected that when there are paralogs in the reference genome these paralogs would be found in the de-novo transcriptome. One explanation could be that the paralogs are so similar that they are merged into a single transcript by the assembler. There is also a chance that only a single paralog is expressed. For the paralogs that are found in de-novo but not in the reference it could be alleles that are assembled into seperate transcripts.
+
+The plots below show the phylegenetic distance between paralogs:
+
+```{r plotCopheneticDist, echo=FALSE,fig.height=3.5}
+sel <- idx & lens[ , "Hv_R"]==1 & lens[ , "HoVu"]==2
+sapply(trees[sel],function(tree){
+  idxHoVu <- tree$tip.label[grepl("HoVu",tree$tip.label)]
+  cophenetic(tree)[idxHoVu[1],idxHoVu[2]]
+}) -> copheneticHoVu
+
+sel <- idx & lens[ , "Hv_R"]==2 & lens[ , "HoVu"]==1
+sapply(trees[sel],function(tree){
+  idxHv_R <- tree$tip.label[grepl("Hv_R",tree$tip.label)]
+  cophenetic(tree)[idxHv_R[1],idxHv_R[2]]
+}) -> copheneticHv_R
+
+hist(log10(copheneticHv_R),breaks=100,
+     xlab="log10( cophenetic distance between Hv_R paralogs )",
+     main=paste0("2 paralogs in Hv_R, 1 ortholog in HoVu (n=",
+                 length(copheneticHv_R),")"))
+hist(log10(copheneticHoVu),breaks=100,
+     xlab="log10( cophenetic distance between HoVu paralogs )",
+     main=paste0("1 ortholog in Hv_R, 2 paralogs in HoVu (n=",
+                 length(copheneticHoVu),")"))
+
+
+sel <- idx & lens[ , "Hv_R"]==2 & lens[ , "HoVu"]==2
+sapply(trees[sel],function(tree){
+  idxHoVu <- tree$tip.label[grepl("HoVu",tree$tip.label)]
+  idxHv_R <- tree$tip.label[grepl("Hv_R",tree$tip.label)]
+  return(c(HoVu=cophenetic(tree)[idxHoVu[1],idxHoVu[2]],
+           Hv_R=cophenetic(tree)[idxHv_R[1],idxHv_R[2]]))
+}) -> copheneticBoth
+hist(log10(copheneticBoth["Hv_R",]),breaks=100,
+     xlab="log10( cophenetic distance between Hv_R paralogs )",
+     main=paste0("2 paralogs in Hv_R, 2 paralogs in HoVu (n=",
+                 ncol(copheneticBoth),")"))
+hist(log10(copheneticBoth["HoVu",]),breaks=100,
+     xlab="log10( cophenetic distance between HoVu paralogs )",
+     main=paste0("2 paralogs in Hv_R, 2 paralogs in HoVu (n=",
+                 ncol(copheneticBoth),")"))
+```
+
+### Paralogs that 
+
+The first paralog heatmap would not display paralogs from early duplications that are common to several pooids. The next heatmap allows this. Conditions for inclusion are:
+
+* Has at least 1 ortholog in each of the de-novo species
+* Has more than 1 ortholog in atleast one species
+* Each species DO NOT form a separate clade (Hv_R/HoVu, Bd_R/Brdi and MeNu1/2 are considered one species)
+
+
+```{r paralogHeatmap2, echo=FALSE, fig.height=8}
+pooids <- c("Bd_R","BrDi","Hv_R","HoVu","MeNu1","MeNu2","NaSt","StLa")
+# forgot hadParalogs... quick fix
+grpStats$hasParalogs <- apply(lens[,pooids]>1,1,any)
+idx <- with(grpStats, (!allSpcAreClans) & hasParalogs & hasAllDenovo)
+
+paralogHeatmap(x = lens[idx,pooids])
+title(sub=paste0("n = ",sum(idx)))
+```

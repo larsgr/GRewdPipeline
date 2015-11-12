@@ -1,0 +1,392 @@
+---
+title: "GeneListTest"
+output:
+  html_document:
+    toc: yes
+---
+
+```{r loadLibraries, echo=FALSE, message=FALSE, results='hide'}
+library(DESeq2)
+library(gplots)
+library(stringr)
+library(topGO)
+
+
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+```{r loadData, echo=FALSE}
+orthoPath <- "/mnt/NOBACKUP/mariansc/share/orthos"
+
+DEnewFile<-"~/GRewd/pipeline/data/DEnew.RDS"
+
+# load DE based based on superGenes
+DEnew <- readRDS(DEnewFile)
+
+# grpIDs included the superGeneModel.Rmd:
+allGrpIDs <- rownames(DEnew$BrDi$resRamp)
+
+# convert DE results to matrix format
+lapply( list( peak="resPeak", ramp="resRamp"), function( peakOrRamp ){
+  lapply( list( pVal="pvalue", pAdj="padj", stat="stat",lfc="log2FoldChange", lfcSE="lfcSE"), function( stat ){
+    m <- sapply(DEnew, function(DEspc){DEspc[[peakOrRamp]][[stat]]})
+    rownames(m) <- rownames(DEnew[[1]][[peakOrRamp]])
+    return(m)
+  })
+}) -> DEmat
+
+# load groups
+grpData <- readRDS(file.path(orthoPath,"splitGroups/goodTreeStats.rds"))
+grps <- loadOrthoGrpsArray(file.path(orthoPath,"splitGroups/goodGroups.txt"))
+
+###########
+# load paml results
+pamlResFile<-"~/GRewd/pipeline/data/pamlRes.RDS"
+
+pamlRes <- readRDS(pamlResFile) 
+
+# remove NA's in H4a (probably caused by trees where the core clade is on the root and can't be marked)
+pamlRes$H4a <- pamlRes$H4a[!is.na(pamlRes$H4a$pVal), ]
+
+# convert to matrix of p-values
+pamlMat <- sapply(pamlRes, with, {pVal[match(allGrpIDs,grpID)]})
+
+
+
+# load barley gene annotations..
+annotFile <- "/mnt/NOBACKUP/mariansc/share/refGenomes/barley_HighConf_genes_MIPS_23Mar12_HumReadDesc.txt"
+annotFileSource <- "ftp://ftpmips.helmholtz-muenchen.de/plants/barley/public_data/genes/barley_HighConf_genes_MIPS_23Mar12_HumReadDesc.txt"
+
+if(!file.exists(annotFile)){
+  download.file(annotFileSource, destfile=annotFile)
+}
+
+annotTbl <- read.table(annotFile, as.is = T,sep = "\t",header = F,skip = 3, quote="",
+           col.names = c("seqID","BlastHit","AHRD.QualityCode","Description","Interpro.annot","V6"))
+
+annotTbl$grpID <- seqIDtoGrpID(grps, annotTbl$seqID, "Hv_R")
+
+apply(annotTbl[ ,1:5],2,function(annotCol){
+  tapply(annotCol, annotTbl$grpID, paste, collapse=" & ")
+}) -> grpAnnotTbl
+
+# as data.frame
+grpAnnotTbl <- as.data.frame(grpAnnotTbl,stringsAsFactors = F)
+```
+
+```{r loadGOannot, echo=FALSE}
+GOannotFile <- "/mnt/NOBACKUP/mariansc/share/refGenomes/barley_HighConf_genes_MIPS_23Mar12_IPROScan_GOs.txt"
+
+# read GO annotations
+HvGOtbl <- read.table(GOannotFile,sep="\t", quote = "",
+                      col.names=c("geneID","GO"), stringsAsFactors=F)
+# convert to gene2GO list
+HvGene2GO <- split(HvGOtbl$GO,HvGOtbl$geneID)
+
+```
+
+```{r defGOFunctions, echo=FALSE}
+
+# make grp2GO list
+HvGOtbl$grpID <- seqIDtoGrpID(grps, HvGOtbl$geneID, "Hv_R")
+grpID2GO <- lapply( split( HvGOtbl$GO, HvGOtbl$grpID ), unique )
+
+
+testGOgrps <- function(grpIDs, bkGrpIDs = NULL, ontology = "BP"){
+  # get annotated background groups
+  if( !is.null(bkGrpIDs) ){
+    annBkGrpIDs <- intersect(names(grpID2GO),bkGrpIDs)
+  } else {
+    annBkGrpIDs <- names(grpID2GO)
+  }
+  
+  allGenes <- factor(as.integer(annBkGrpIDs %in% grpIDs))
+  names(allGenes) <- annBkGrpIDs
+  
+  sink("/dev/null") # silence the output from topGO
+  
+  GOdata <- new("topGOdata", ontology = ontology, allGenes = allGenes,
+                annot = annFUN.gene2GO, gene2GO = grpID2GO)
+  
+  
+  # run fisher test using classic algorithm
+  classic.fisher <- runTest(GOdata, algorithm = "classic", statistic = "fisher")
+  weight.fisher <- runTest(GOdata, algorithm = "weight", statistic = "fisher")
+  
+  sink() # stop sinking output
+  
+  GenTable(GOdata, classic = classic.fisher, weight=weight.fisher,
+           orderBy = "weight", ranksOf="classic", topNodes = 20)
+}
+```
+
+
+### Explanation of the AHRD quality code
+
+AHRD’s quality-code consists of a four character string, where each character is either ‘*’ if the respective criteria is met or ‘-’ otherwise. Their meaning is explained in the following table:
+
+Position | Criteria
+-------- | --------
+   1     | Bit score of the blast result is >50 and e-value is < e-10
+   2     | Overlap of the blast result is >60%
+   3     | Top token score of assigned HRD is >0.5
+   4     | Gene ontology terms found in description line 
+
+### Genes responding to cold in all pooids
+
+Which genes are up-regulated in all our five pooids as response to cold?
+
+Select genes with p.adj<0.05 and lfc>1 in all species. Ramp and Peak effect tested individually.
+
+
+```{r upInall, echo=FALSE}
+sigMat <- lapply(DEmat, with, {pAdj < 0.05 & lfc > 1})
+
+venn(apply(sigMat$peak,2,which))
+title(main="significant peak up",sub="p.adj<0.05 & lfc>1")
+
+whichAllpeakUp <- which(apply(sigMat$peak,1,all))
+
+heatmap(DEmat$peak$stat[whichAllpeakUp,], breaks=c(-20,seq(-5.5,5.5,by=1),20),
+        col=colorRampPalette(c("green","black","red"))(13),
+        RowSideColors = ifelse(pamlMat[whichAllpeakUp,"H4a"]<0.05,"red","grey"),
+        scale="none", Rowv = NA, Colv = NA, main="Peak up in all (H4a)")
+
+
+DT::datatable(grpAnnotTbl[names(whichAllpeakUp), ])
+
+venn(apply(sigMat$ramp,2,which))
+title(main="significant ramp up",sub="p.adj<0.05 & lfc>1")
+
+whichAllrampUp <- which(apply(sigMat$ramp,1,all))
+
+heatmap(DEmat$ramp$stat[whichAllrampUp,], breaks=c(-20,seq(-5.5,5.5,by=1),20),
+        col=colorRampPalette(c("green","black","red"))(13),
+        RowSideColors = ifelse(pamlMat[whichAllrampUp,"H4a"]<0.05,"red","grey"),
+        scale="none", Rowv = NA, Colv = NA, main="Ramp up in all (H4a)")
+
+DT::datatable(grpAnnotTbl[names(whichAllrampUp), ])
+
+```
+
+### Only up in core
+
+```{r simpleCoreBasal, echo=FALSE}
+whichCorePeakUp <- which(apply(sigMat$peak[ ,1:2],1,all) & apply(!sigMat$peak[ ,3:5],1,all))
+
+heatmap(DEmat$peak$stat[whichCorePeakUp,], breaks=c(-20,seq(-5.5,5.5,by=1),20),
+        col=colorRampPalette(c("green","black","red"))(13),
+        RowSideColors = ifelse(pamlMat[whichCorePeakUp,"H4b"]<0.05,"red","grey"),      
+        scale="none", Rowv = NA, Colv = NA, main="Peak up in core (H4b)")
+
+DT::datatable(grpAnnotTbl[names(whichCorePeakUp), ])
+
+
+whichCoreRampUp <- which(apply(sigMat$ramp[ ,1:2],1,all) & apply(!sigMat$ramp[ ,3:5],1,all))
+
+heatmap(DEmat$ramp$stat[whichCoreRampUp,], breaks=c(-20,seq(-5.5,5.5,by=1),20),
+        col=colorRampPalette(c("green","black","red"))(13), Rowv = NA,
+        RowSideColors = ifelse(pamlMat[whichCoreRampUp,"H4b"]<0.05,"red","grey"),      
+        scale="none", Colv = NA, main="Ramp up in core (H4b)")
+
+DT::datatable(grpAnnotTbl[names(whichCoreRampUp), ])
+```
+
+### More up in core than in basal (t-test)
+
+
+```{r ttestOnStat, echo=FALSE,cache=TRUE}
+apply(DEmat$ramp$stat,1,function(statRow){
+  res <- t.test(x = statRow[1:2],y = statRow[3:5],alternative = "greater")
+  return(c(pVal=res$p.value, tStat=res$statistic))
+}) -> rampCoreVsBasalttest
+
+apply(DEmat$peak$stat,1,function(statRow){
+  res <- t.test(x = statRow[1:2],y = statRow[3:5],alternative = "greater")
+  return(c(pVal=res$p.value, tStat=res$statistic))
+}) -> peakCoreVsBasalttest
+
+```
+
+
+```{r tstatCoreVsBasal, echo=FALSE}
+idx <- order(peakCoreVsBasalttest["tStat.t",],decreasing = T)[1:40]
+
+heatmap(DEmat$peak$stat[idx,], breaks=c(-20,seq(-5.5,5.5,by=1),20),
+        col=colorRampPalette(c("green","black","red"))(13),
+        RowSideColors = ifelse(pamlMat[idx,"H4b"]<0.05,"red","grey"),
+        scale="none", Colv = NA,main="Peak up in core (H4b)")
+
+tmpTbl <- cbind(grpAnnotTbl[rownames(DEmat$peak$stat)[idx], ],
+                tStat=round(sort(peakCoreVsBasalttest["tStat.t",],decreasing = T)[1:40],digits = 3))
+DT::datatable(tmpTbl)
+
+
+idx <- order(rampCoreVsBasalttest["tStat.t",],decreasing = T)[1:40]
+
+heatmap(DEmat$ramp$stat[idx,], breaks=c(-20,seq(-5.5,5.5,by=1),20),
+        col=colorRampPalette(c("green","black","red"))(13),
+        RowSideColors = ifelse(pamlMat[idx,"H4b"]<0.05,"red","grey"),
+        scale="none", Colv = NA,main="Ramp up in core (H4b)")
+
+tmpTbl <- cbind(grpAnnotTbl[rownames(DEmat$ramp$stat)[idx], ],
+                tStat=round(sort(rampCoreVsBasalttest["tStat.t",],decreasing = T)[1:40],digits = 3))
+DT::datatable(tmpTbl)
+```
+
+### Up in all except Stipa (StLa)
+
+```{r upInAllExceptStLa, echo=FALSE}
+notStLa <- c("BrDi", "HoVu", "MeNu1", "NaSt")
+whichNotStLaPeakUp <- which(apply(sigMat$peak[ ,notStLa],1,all) & !sigMat$peak[ ,"StLa"])
+
+heatmap(DEmat$peak$stat[whichNotStLaPeakUp,], breaks=c(-20,seq(-5.5,5.5,by=1),20),
+        col=colorRampPalette(c("green","black","red"))(13),
+        scale="none", Rowv = NA, Colv = NA, main="Peak up in all except Stipa")
+
+DT::datatable(grpAnnotTbl[names(whichNotStLaPeakUp), ])
+
+
+whichNotStLaRampUp <- which(apply(sigMat$ramp[ ,notStLa],1,all) & !sigMat$ramp[ ,"StLa"])
+
+heatmap(DEmat$ramp$stat[whichNotStLaRampUp,], breaks=c(-30,seq(-5.5,5.5,by=1),30),
+        col=colorRampPalette(c("green","black","red"))(13), Rowv = NA,
+        scale="none", Colv = NA, main="Ramp up in all except Stipa")
+
+DT::datatable(grpAnnotTbl[names(whichNotStLaRampUp), ])
+```
+
+> NOTE: StLa does not have a T-1 sample and the ramp effect is calculated as the contrast between T0 (instead of T-1) and T3/4. Since T0 and T3/4 was sampled at a different time of the day it could be confounded with effects of the daily rythm.
+
+## Lineage specific
+
+### Nardus specific response
+
+```{r upInNaSt, echo=FALSE}
+
+whichNaStPeakUp <- which( rowSums(sigMat$peak)==1 & sigMat$peak[ ,"NaSt"])
+
+heatmap(DEmat$peak$stat[whichNaStPeakUp,], breaks=c(-30,seq(-5.5,5.5,by=1),30),
+        col=colorRampPalette(c("green","black","red"))(13), #Rowv = NA,
+        RowSideColors = ifelse(pamlMat[whichNaStPeakUp,"H5a"]<0.05,"red","grey"),        
+        scale="none", Colv = NA, main="Peak up in Nardus only (H5a)")
+
+summary(table(H5a = pamlMat[ ,"H5a"]<0.05, 
+              NaStPeakUp = allGrpIDs %in% names(whichNaStPeakUp)))
+
+DT::datatable(grpAnnotTbl[names(whichNaStPeakUp), ])
+
+DT::datatable(testGOgrps(names(whichNaStPeakUp),bkGrpIDs = rownames(sigMat$peak)))
+
+
+whichNaStRampUp <- which( rowSums(sigMat$ramp)==1 & sigMat$ramp[ ,"NaSt"])
+
+heatmap(DEmat$ramp$stat[whichNaStRampUp,], breaks=c(-30,seq(-5.5,5.5,by=1),30),
+        col=colorRampPalette(c("green","black","red"))(13), #Rowv = NA,
+        RowSideColors = ifelse(pamlMat[whichNaStRampUp,"H5a"]<0.05,"red","grey"),        
+        scale="none", Colv = NA, main="Ramp up in Nardus only (H5a)")
+
+summary(table(H5a = pamlMat[ ,"H5a"]<0.05, 
+              NaStPeakUp = allGrpIDs %in% names(whichNaStRampUp)))
+
+
+DT::datatable(grpAnnotTbl[names(whichNaStRampUp), ])
+
+DT::datatable(testGOgrps(names(whichNaStRampUp),bkGrpIDs = rownames(sigMat$peak)))
+```
+
+### Melica specific response
+
+```{r upInMeNu, echo=FALSE}
+
+whichMeNuPeakUp <- which( rowSums(sigMat$peak)==1 & sigMat$peak[ ,"MeNu1"])
+
+heatmap(DEmat$peak$stat[whichMeNuPeakUp,], breaks=c(-30,seq(-5.5,5.5,by=1),30),
+        col=colorRampPalette(c("green","black","red"))(13), #Rowv = NA,
+        RowSideColors = ifelse(pamlMat[whichMeNuPeakUp,"H5b"]<0.05,"red","grey"),        
+        scale="none", Colv = NA, main="Peak up in Melica only (H5b)")
+
+summary(table(H5a = pamlMat[ ,"H5b"]<0.05, 
+              NaStPeakUp = allGrpIDs %in% names(whichMeNuPeakUp)))
+
+DT::datatable(grpAnnotTbl[names(whichMeNuPeakUp), ])
+
+DT::datatable(testGOgrps(names(whichMeNuPeakUp),bkGrpIDs = rownames(sigMat$peak)))
+
+whichMeNuRampUp <- which( rowSums(sigMat$ramp)==1 & sigMat$ramp[ ,"MeNu1"])
+
+heatmap(DEmat$ramp$stat[whichMeNuRampUp,], breaks=c(-30,seq(-5.5,5.5,by=1),30),
+        col=colorRampPalette(c("green","black","red"))(13), #Rowv = NA,
+        RowSideColors = ifelse(pamlMat[whichMeNuRampUp,"H5b"]<0.05,"red","grey"),        
+        scale="none", Colv = NA, main="Ramp up in Melica only")
+
+summary(table(H5a = pamlMat[ ,"H5b"]<0.05, 
+              NaStPeakUp = allGrpIDs %in% names(whichMeNuRampUp)))
+
+
+DT::datatable(grpAnnotTbl[names(whichMeNuRampUp), ])
+
+DT::datatable(testGOgrps(names(whichMeNuRampUp),bkGrpIDs = rownames(sigMat$peak)))
+
+```
+
+### Test for GO enrichment of groups with positive selection
+
+#### H4a - positive selection in root of pooid branch
+
+```{r pamlGO_H4a, echo=FALSE}
+isNA <- is.na(pamlMat[ ,"H5a"])
+DT::datatable( testGOgrps( allGrpIDs[pamlMat[ !(isNA),"H5a"]<0.05],
+                           bkGrpIDs = allGrpIDs[!isNA]) )
+```
+
+#### H4b - positive selection in root of core pooid branch (Lolium + Hordeum + Brachypodium)
+
+```{r pamlGO_H4b, echo=FALSE}
+DT::datatable( testGOgrps( allGrpIDs[pamlMat[ ,"H4b"]<0.05], bkGrpIDs = allGrpIDs) )
+```
+
+#### H4c - positive selection in root of inner core pooid branch (Lolium + Hordeum)
+```{r pamlGO_H4c, echo=FALSE}
+DT::datatable( testGOgrps( allGrpIDs[pamlMat[ ,"H4c"]<0.05], bkGrpIDs = allGrpIDs) )
+```
+
+#### H5a - positive selection in Nardus
+```{r pamlGO_H5a, echo=FALSE}
+DT::datatable( testGOgrps( allGrpIDs[pamlMat[ ,"H5a"]<0.05], bkGrpIDs = allGrpIDs) )
+```
+
+#### H5b - positive selection in Melica
+```{r pamlGO_H5b, echo=FALSE}
+DT::datatable( testGOgrps( allGrpIDs[pamlMat[ ,"H5b"]<0.05], bkGrpIDs = allGrpIDs) )
+```
+
+
+```{r echo=FALSE, eval=FALSE}
+SE <- DEnew$HoVu$resPeak$lfcSE
+x <- DEnew$HoVu$resPeak$log2FoldChange
+z <- DEnew$HoVu$resPeak$stat
+p <- DEnew$HoVu$resPeak$padj
+
+# z-score of 2 is equivalent to P-adjusted of 0.05
+
+table(over0 = z>2, under1 = ((1-x)/SE) > 2)
+hist(x[(z>2) & !(((1-x)/SE) > 2)])
+
+hist(SE)
+plot(x,SE, col=1+1*(x>2*SE)+2*((1-x)>2*SE))
+
+table(1*(x>2*SE)+2*((1-x)>2*SE))
+
+spc2col <- c(BrDi="cyan",HoVu="blue",MeNu1="red",StLa="yellow",NaSt="black")
+plot(NULL,xlim=c(0,1.5),ylim=c(0,4))
+for(spc in names(DEnew)){
+  lines(density(DEnew[[spc]]$resRamp$lfcSE),col=spc2col[spc])  
+}
+cor(DEnew$BrDi$resRamp$lfcSE,DEnew$StLa$resRamp$baseMean)
+plot(density(log2(DEnew$StLa$resRamp$baseMean[ DEnew$StLa$resRamp$lfcSE > 0.9])))
+lines(density(log2(DEnew$StLa$resRamp$baseMean[ DEnew$StLa$resRamp$lfcSE < 0.9])),col="red")
+
+
+```
+

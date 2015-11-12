@@ -1,0 +1,278 @@
+---
+title: "superGeneModel"
+output: html_document
+---
+
+### Goal of analysis
+
+* Create a single matrix for expression across all species
+* Each row is an orthoGroup
+* Expression in one species is the sum of expression of all paralogs (superGene)
+* Variance is estimated using all species
+
+Paralog read counts are added together to get a single expression value per group in each species. One justification for this is that a majority of the paralogs we observe in the denovo assemblies are not found in the reference which indicates that they are artifacts. By having a single expression matrix that includes all species, DESeq will assume variance to be equal across species in each ortholog group?
+
+
+```{r loadLibraries, echo=FALSE, message=FALSE}
+library(DESeq2)
+
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+### output
+
+* `~/GRewd/pipeline/data/superExprMatrix.RDS` - Matrix of superGene read counts (samples in columns and groups in rows)
+* `~/GRewd/pipeline/data/VSTnew.RDS` - Matrix of superGene variance stabilized expression
+* `~/GRewd/pipeline/data/DEnew.RDS` - DESeq2 contrast results (class=`DESeqResults`) for each species and each effect (peak/ramp) with variance calculated for all species together
+* `~/GRewd/pipeline/data/DEeach.RDS` - DESeq2 contrast results (class=`DESeqResults`) for each species and each effect (peak/ramp) with variance calculated for each individual species
+
+```{r loadData, echo=FALSE}
+orthoPath <- "/mnt/NOBACKUP/mariansc/share/orthos"
+
+###########
+# Output files:
+#
+DEnewFile<-"~/GRewd/pipeline/data/DEnew.RDS"
+VSTnewFile<-"~/GRewd/pipeline/data/VSTnew.RDS"
+superExprMatrixFile <- "~/GRewd/pipeline/data/superExprMatrix.RDS"
+DEeachFile<-"~/GRewd/pipeline/data/DEeach.RDS"
+DEmatFile <- "~/GRewd/pipeline/data/DEmat.RDS"
+
+###########
+# Input files:
+#
+rsemFiles <- list(
+  HoVu = dir("/mnt/NOBACKUP/mariansc/share/RSEM/HoVu",pattern="genes.results$",full.names = T),
+  BrDi = dir("/mnt/NOBACKUP/mariansc/share/RSEM/BrDi",pattern="genes.results$",full.names = T),
+  MeNu1 = dir("/mnt/NOBACKUP/mariansc/share/RSEM/MeNu1",pattern="genes.results$",full.names = T),
+  StLa = dir("/mnt/NOBACKUP/mariansc/share/RSEM/StLa",pattern="^StLa.*genes.results$",full.names = T),
+  NaSt = dir("/mnt/NOBACKUP/mariansc/share/RSEM/NaSt",pattern="^NaSt1.*genes.results$",full.names = T)
+  )
+
+# load DE
+load(file.path(orthoPath,"DESeq/DE.RData"))
+
+# load groups
+grpData <- readRDS(file.path(orthoPath,"splitGroups/goodTreeStats.rds"))
+grps <- loadOrthoGrpsArray(file.path(orthoPath,"splitGroups/goodGroups.txt"))
+
+# get number of genes per species per group
+lens <- unlist(lapply(grps,length))
+dim(lens) <- dim(grps)
+dimnames(lens) <- dimnames(grps)
+
+```
+
+### Filtering of orthoGroups
+
+The orthogroups included must pass the following criteria:
+
+* Group must contain at least 3 of our 5 species
+* Paralogs in each species must form a monophyletic clade (i.e. no duplications before species split)
+* Core species (Brachy, Hordeum and Lolium) must form a monophyletic clade
+
+```{r grpFilter, echo=FALSE}
+nDenovo <- rowSums(lens[,c("HoVu","BrDi","MeNu1","StLa","NaSt")]>0)
+idx <- (nDenovo > 2) & grpData$allSpcAreClans & grpData$isCoreClan
+```
+
+
+
+```{r calcsuperGenes, echo=FALSE}
+if( !file.exists(superExprMatrixFile)){
+  
+  lapply( rsemFiles, function(files.RSEM.spc){
+    sampleID <- sub("\\.genes\\.results$","", basename(files.RSEM.spc))
+    sapply( setNames(files.RSEM.spc, sampleID), function(rsemFile){
+      cat("Reading",rsemFile,"\n")
+      x <- readr::read_tsv(rsemFile)
+      setNames(x$expected_count, sub("\\|","_",x$gene_id))
+    })  
+  }) -> RSEMexpr
+  
+  
+  
+  # Add paralog expression to generate a single matrix with all species
+  do.call(cbind,lapply(names(RSEMexpr),function(spc){
+    t(sapply(grps[idx,spc],function(seqIDs){
+      colSums(RSEMexpr[[spc]][seqIDs, ,drop=F])
+    }))
+  })) -> expr
+  saveRDS( expr, file = superExprMatrixFile)    
+} else {
+  expr <- readRDS(file = superExprMatrixFile)  
+}
+```
+
+```{r calcNewDE, echo=FALSE}
+spcs <- c("BrDi","HoVu","MeNu1","StLa","NaSt")
+spcs <- setNames(spcs,spcs)
+
+TtoF <- c(`T-1`="ramp0",T0="peak0",T1="peak1",T3="ramp1",T4="ramp1")
+
+colData <- as.data.frame(stringr::str_split_fixed(colnames(expr),"\\.",4)[ ,1:3])
+names(colData) <- c("spcPop","timePoint","mix")
+colData$spc <-  as.factor(stringr::str_extract(colData$spcPop,paste(spcs,collapse="|")))
+
+colData$sf <- as.factor(paste0(colData$spc,TtoF[as.character(colData$timePoint)]))
+
+
+if( !file.exists(DEnewFile)){
+  dds <- DESeqDataSetFromMatrix(countData = round(expr),
+                                colData = colData,
+                                design = formula(~ sf ))
+  
+  dds <- DESeq(dds)
+  
+  lapply(spcs,function(spc){
+    
+    resPeak <- results(dds, contrast=c("sf",paste0(spc,"peak1"),paste0(spc,"peak0")))
+    if( spc=="StLa"){
+      # T-1 (ramp0) is missing in StLa... use T0 instead
+      resRamp <- results(dds, contrast=c("sf",paste0(spc,"ramp1"),paste0(spc,"peak0")))
+    } else {
+      resRamp <- results(dds, contrast=c("sf",paste0(spc,"ramp1"),paste0(spc,"ramp0")))      
+    }
+    
+    return(list(resRamp=resRamp,resPeak=resPeak)) 
+  }) -> DEnew
+  saveRDS(DEnew,DEnewFile)
+  
+  # Variance Stabilizing Transformation
+  vst <- assay(varianceStabilizingTransformation(dds))
+  colnames(vst) <- colnames(expr)
+  saveRDS(vst,VSTnewFile)  
+} else {
+  DEnew <- readRDS(DEnewFile)  
+  vst <- readRDS(VSTnewFile)  
+}
+
+```
+
+```{r makeDEmat, echo=FALSE}
+if(!file.exists(DEmatFile)){
+  # convert DE results to matrix format
+  lapply( list( peak="resPeak", ramp="resRamp"), function( peakOrRamp ){
+    lapply( list( pVal="pvalue", pAdj="padj", stat="stat",lfc="log2FoldChange", lfcSE="lfcSE"), function( stat ){
+      m <- sapply(DEnew, function(DEspc){DEspc[[peakOrRamp]][[stat]]})
+      rownames(m) <- rownames(DEnew[[1]][[peakOrRamp]])
+      return(m)
+    })
+  }) -> DEmat  
+  
+  saveRDS(DEmat,DEmatFile)
+} else {
+  DEmat <- readRDS(DEmatFile)
+}
+```
+
+
+### Compare superGene stat values with individual gene stat values
+
+As before a peak and ramp effects using DESeq2. The difference is that we get one result per supergene instead of individual genes and that dispersion estimates (variance) are calculated once across all orthologs in all species instead of once per species. The plot below compares the "stat" value from the peak and ramp tests between the (old) indivual genes and (new) supergenes. The "stat" value is directly related to p-value so that any specific stat value gives the same p-value in any test.
+
+
+```{r plotNewOldStats, echo=FALSE}
+
+for(spc in spcs){
+  grpIDs <- rownames(DEnew[[spc]]$resRamp)
+  nParas <- lens[grpIDs,spc]
+  statGrp <- rep(DEnew[[spc]]$resRamp$stat,nParas)
+  
+  seqIDs <- unlist(grps[grpIDs,spc])
+  statSeq <- DE[[spc]]$resRamp[seqIDs,"stat"]
+  
+  plot(statSeq,statGrp,xlim=c(-10,10),ylim=c(-10,10),main=paste(spc,"ramp test statistic"),
+       xlab="stat per individual gene",ylab="stat per supergene",
+       col=ifelse(rep(nParas,nParas)>2,"green",rep(nParas,nParas)))
+  
+  legend("bottomright",legend=c("1 (no paralogs)","2 paralogs","3+ paralogs"),
+         col=c("black","red","green"),pch=1)
+  
+}
+
+for(spc in spcs){
+  grpIDs <- rownames(DEnew[[spc]]$resPeak)
+  nParas <- lens[grpIDs,spc]
+  statGrp <- rep(DEnew[[spc]]$resPeak$stat,nParas)
+  
+  seqIDs <- unlist(grps[grpIDs,spc])
+  statSeq <- DE[[spc]]$resPeak[seqIDs,"stat"]
+  
+  plot(statSeq,statGrp,xlim=c(-10,10),ylim=c(-10,10),main=paste(spc,"peak test statistic"),
+       xlab="stat per individual gene",ylab="stat per supergene",
+       col=ifelse(rep(nParas,nParas)>2,"green",rep(nParas,nParas)))
+  
+  legend("bottomright",legend=c("1 (no paralogs)","2 paralogs","3+ paralogs"),
+         col=c("black","red","green"),pch=1)
+  
+}
+
+```
+
+### Compare superGene stat values when using common variance and species specific variance
+
+```{r calcDEeach, echo=FALSE}
+if( !file.exists(DEeachFile) ){
+  spcs <- c("BrDi","HoVu","MeNu1","StLa","NaSt")
+  spcs <- setNames(spcs,spcs)
+  
+  TtoF <- c(`T-1`="ramp0",T0="peak0",T1="peak1",T3="ramp1",T4="ramp1")
+  
+  colData <- as.data.frame(stringr::str_split_fixed(colnames(expr),"\\.",4)[ ,1:3])
+  names(colData) <- c("spcPop","timePoint","mix")
+  colData$spc <-  as.factor(stringr::str_extract(colData$spcPop,paste(spcs,collapse="|")))
+  
+  colData$f <- as.factor(TtoF[as.character(colData$timePoint)])
+  
+  
+  
+  lapply(spcs,function(spc){
+    idx <- colData$spc == spc
+    dds <- DESeqDataSetFromMatrix(countData = round(expr[ ,idx]),
+                                  colData = colData[idx, ],
+                                  design = formula(~ f ))
+    
+    dds <- DESeq(dds)
+    
+    resPeak <- results(dds, contrast=c("f","peak1","peak0"))
+    if( spc=="StLa"){
+      # T-1 (ramp0) is missing in StLa... use T0 instead
+      resRamp <- results(dds, contrast=c("f","ramp1","peak0"))
+    } else {
+      resRamp <- results(dds, contrast=c("f","ramp1","ramp0"))      
+    }
+    
+    return(list(resRamp=resRamp,resPeak=resPeak)) 
+  }) -> DEeach
+  saveRDS(DEeach,DEeachFile)
+} else {
+  DEeach <- readRDS(DEeachFile)
+}
+```
+
+
+```{r plotCommonVsIndividualStats, echo=FALSE}
+
+for(spc in spcs){
+  plot(DEnew[[spc]]$resRamp[ ,"stat"], DEeach[[spc]]$resRamp[ ,"stat"],
+       xlim=c(-10,10),ylim=c(-10,10),main=paste(spc,"ramp test statistic"),
+       xlab="stat (common variance)",ylab="stat (individual species variance)")
+}
+
+for(spc in spcs){
+  plot(DEnew[[spc]]$resPeak[ ,"stat"], DEeach[[spc]]$resPeak[ ,"stat"],
+       xlim=c(-10,10),ylim=c(-10,10),main=paste(spc,"peak test statistic"),
+       xlab="stat (common variance)",ylab="stat (individual species variance)")
+}
+
+```
+
+
+
+```{r StrangeThing, echo=FALSE, eval=FALSE}
+# grp100565.3 has no ortholog in NaSt yet has ramp effect?
+grps["grp100565.3",spcs]
+DEnew$NaSt$resRamp["grp100565.3",]
+```
+

@@ -1,0 +1,86 @@
+---
+title: "DE analysis"
+output: html_document
+---
+
+## Goal of analysis
+
+Summarize the DESeq results. Compare differentially expressed genes across species using the high confidence ortholog groups (1:1 with correct topology).
+
+## Some notes on the differntial expression calculation
+
+Differential expression was calculated with DESeq for each species independantly.
+
+The samples were taken at five timepoints (T-1, T0, T1, T3, T4). T3 and T4 are treated as replicates of the same timepoint (T3/4).
+
+Differential expression is calculated between timepoints T0 vs T1 (peak response) and T-1 vs T3/4 (ramp response).
+
+The model assumes equal variance across all timepoints. That means that there will be correlation between the P-values of the peak and ramp as they are based on the same variance estimate.
+
+There are different number replicates in the different species and different number of replicates at different time-points.
+
+Brachypodium does not have T4. Stipa does not have T-1 sample and therefore uses T0 instead to calculate ramp resonse.
+
+```{r loadLibraries, echo=FALSE, message=FALSE}
+library(DESeq2)
+library(gplots)
+
+
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+
+```{r loadData, echo=FALSE}
+# load DE results
+load("/mnt/NOBACKUP/mariansc/share/orthos/DESeq/DE.RData")
+
+grpData <- readRDS("/mnt/NOBACKUP/mariansc/share/orthos/splitGroups/goodTreeStats.rds")
+grps <- loadOrthoGrpsArray("/mnt/NOBACKUP/mariansc/share/orthos/splitGroups/goodGroups.txt")
+
+# select high confidence groups (1:1 with correct topology)
+grpIdx <- with(grpData, hasAllDenovo & !hasParalogs & allSpcAreClans & isCoreClan)
+
+# make matrix out of DE results
+lapply(c(ramp="resRamp",peak="resPeak"),function(eff){
+  lapply(c(Qval="padj",FC="log2FoldChange",Pval="pvalue",mean="baseMean",stat="stat"),function(stat){
+    sapply(names(DE), function(spc){
+      DE[[spc]][[eff]][unlist(grps[grpIdx,spc]),stat]
+    }) 
+  })
+}) -> resArray
+```
+
+
+
+## Overlap of significant effects between species
+```{r plotVenn, echo=FALSE}
+lapply(resArray,function(res){
+  sig <- (res$Qval<0.1) * sign(res$FC) * (abs(res$FC)>1)
+  sig[is.na(sig)] <- 0
+  return(sig)
+}) -> sig
+
+
+venn( data=apply(sig$peak[,c("BrDi","HoVu","NaSt","MeNu1","StLa")],2,
+                 function(x){ which(x==1) }))
+title( main="Significant peak effect",
+       sub="adj.P < 0.1, log2FC > 1")
+
+venn( data=apply(sig$ramp[,c("BrDi","HoVu","NaSt","MeNu1","StLa")],2,
+                 function(x){ which(x==1) }))
+title( main="Significant ramp effect",
+       sub="adj.P < 0.1, log2FC > 1")
+
+venn( data=apply(sig$peak[,c("BrDi","HoVu","NaSt","MeNu1","StLa")],2,
+                 function(x){ which(x==-1) }))
+title( main="Significant negative peak effect",
+       sub="adj.P < 0.1, log2FC < -1")
+
+venn( data=apply(sig$ramp[,c("BrDi","HoVu","NaSt","MeNu1","StLa")],2,
+                 function(x){ which(x==-1) }))
+title( main="Significant negative ramp effect",
+       sub="adj.P < 0.1, log2FC < -1")
+
+```
+
+

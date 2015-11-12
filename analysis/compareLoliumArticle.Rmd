@@ -1,0 +1,209 @@
+---
+title: "Compare Cold response genes with clusters from lolium article"
+output: html_document
+---
+
+
+The article in question: [Vernalization Mediated Changes in the Lolium perenne Transcriptome](http://journals.plos.org/plosone/article?id=10.1371/journal.pone.0107365)
+
+### tl;dr:
+
+Two variants of Lolium Perenne (Falster and Veyo) was subject to cold, short days for 9 weeks to evoke a vernalization response followed by long, warm days in one week. Leafs were sampled before cold, and after 2 days, 4 weeks and 9 weeks of cold, then after 1 day and 7 days of warm, long day conditions. Expression profiles where clustered using k-means clustering (k=50) for each genotype (See figure 3 and 4 in the article).
+
+List of transcript IDs for the clusters was downloaded from [supplementary material S3](http://journals.plos.org/plosone/article/asset?unique&id=info:doi/10.1371/journal.pone.0107365.s007). Corresponding transcript sequences was downloaded from http://www.ebi.ac.uk/arrayexpress/files/E-MTAB-2623/E-MTAB-2623.processed.1.zip
+
+```{r loadLibraries, echo =FALSE, message=FALSE}
+library(gplots)
+library(DESeq2)
+source("/mnt/users/lagr/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+```{r loadData, echo=FALSE}
+# define paths:
+pipelineOutDir <- "/mnt/NOBACKUP/mariansc/share"
+indataPath <- "/mnt/users/lagr/GRewd/pipeline/indata/compareLoliumArticle"
+
+# load coldGenes
+coldGenesTbl <- readRDS("~/GRewd/pipeline/analysis/coldGenesTbl.RDS")
+
+# load expression data (inside DE results)
+load(file.path(pipelineOutDir,"orthos/DESeq/DE.RData"))
+
+
+
+# load groups
+grpsTbl <- loadOrthoGrpsTable(orthoGrpFile = file.path(pipelineOutDir,"orthos/orthoMCL/groups.txt"))
+grps <- loadOrthoGrpsArray(orthoGrpFile = file.path(pipelineOutDir,"orthos/orthoMCL/groups.txt"))
+
+lens <- sapply(grps,length)
+dim(lens) <- dim(grps)
+dimnames(lens) <- dimnames(grps)
+
+```
+
+```{r loadClusterIds, echo=FALSE, message=FALSE}
+# load tables (exported from excel sheets)
+falsterTbl <- read.csv(file = file.path(indataPath,"Falster leaf.csv"), stringsAsFactors=F)
+veyoTbl <- read.csv(file = file.path(indataPath,"Veyo leaf.csv"), stringsAsFactors=F)
+
+# trim the transctipt ID strings
+falsterTbl$Transcript.ID <- stringr::str_trim(falsterTbl$Transcript.ID)
+veyoTbl$Transcript.ID <- stringr::str_trim(veyoTbl$Transcript.ID)
+
+# read blast results
+bres <- readr::read_tsv(file = file.path(indataPath,"Falster_Veyo_VS_allProteomes.blastx"),
+                        progress = F, col_names = c("qseqid", "sseqid", "pident", "length",
+                                                    "mismatch", "gapopen", "qstart", "qend",
+                                                    "sstart", "send", "evalue", "bitscore"))
+
+# find best match with group ID
+bres$grpID <- grpsTbl$grpID[match(bres$sseqid, grpsTbl$seqID)]
+bres <- bres[!is.na(bres$grpID), ] # remove hits with no group
+falsterTbl$grpID <- bres$grpID[match(falsterTbl$Transcript.ID,bres$qseqid)]
+veyoTbl$grpID <- bres$grpID[match(veyoTbl$Transcript.ID,bres$qseqid)]
+
+lapply(list(veyo=veyoTbl, falster=falsterTbl),function(tbl){
+  tapply(tbl$grpID,tbl$Cluster,function(grpIDs){
+    unique(grpIDs[!is.na(grpIDs)])
+  })
+}) -> clusterGrpIds
+```
+
+
+```{r calcSigGrps, echo=FALSE}
+# get grpIDs of significant genes
+lapply(c(ramp="resRamp",peak="resPeak"),function(eff){
+  lapply(c(up=1,down=-1),function(direction){
+    lapply(setNames(names(DE),names(DE)), function(spc){
+      with(DE[[spc]][[eff]], {
+        (padj<0.05) * sign(log2FoldChange) * (abs(log2FoldChange)>1)
+      }) -> sig
+      sig[is.na(sig)] <- 0
+      
+      flatGrpIDs <- rep(rownames(grps),lens[ ,spc])
+      spcGeneIDs <- unlist(grps[,spc])
+      
+      sigGeneIDs <- rownames(DE[[spc]][[eff]])[sig==direction]
+      sigGrpIDs <- flatGrpIDs[match(sigGeneIDs,spcGeneIDs)]
+      
+      return( unique(sigGrpIDs))
+    })
+  }) 
+}) -> sigGrpIds
+```
+
+
+
+## Proportion of significant genes in each cluster
+The heatmaps below shows the proportion of genes (darker means higher proportion) in each cluster that is mapped to a group which has a significant peak/ramp up response in each of our species. The way to interpret the heatmap is to compare with the cluster profile figures in the article
+
+```{r plotHeatmap, echo=FALSE}
+
+
+plotClusterHeatmap <- function(moduleGrpIDs,main="",eff="peak"){
+  # count number of significant groups are represented in each cluster
+  lapply(sigGrpIds,lapply,lapply,function(sigGrpID){
+    sapply(moduleGrpIDs, function(grpIDs){
+      sum(sigGrpID %in% grpIDs)
+    })
+  }) -> nSigGrpsPerModule
+  
+  nGrpsPerMod <- sapply(moduleGrpIDs,length)
+  
+  # plot heatmap of prop. significant genes in modules dor each species
+  sigUpProp <- sapply(nSigGrpsPerModule[[eff]]$up,"/",nGrpsPerMod)
+  
+  heatmap(sigUpProp, Rowv = NA, Colv=NA, scale = "none",
+          col=colorRampPalette(RColorBrewer::brewer.pal(n=9,name = "Blues"))(100),
+          main=main)
+}
+
+plotClusterHeatmap(clusterGrpIds$veyo,"Peak Up in Veyo clusters", "peak")
+plotClusterHeatmap(clusterGrpIds$veyo,"Ramp Up in Veyo clusters", "ramp")
+plotClusterHeatmap(clusterGrpIds$falster,"Peak Up in Falster clusters", "peak")
+plotClusterHeatmap(clusterGrpIds$falster,"Ramp Up in Falster clusters", "ramp")
+
+```
+
+## Overlap of significant genes accross species
+
+The following venn diagrams shows the overlap groups which show any significant response to the treatment (peak/ramp,up/down). Note that for the lolium variants this includes response to the following warm week.
+
+```{r vennDiagram, echo=FALSE}
+
+allClustersGrpIDs <- lapply(clusterGrpIds,function(x){unique(unlist(x))})
+
+allSpcSigGrps <- unique(unlist(sigGrpIds))
+
+venn( data=list(AnyOurSpecies=allSpcSigGrps,
+                Falster=allClustersGrpIDs$falster,
+                Veyo=allClustersGrpIDs$veyo))
+title( main="Any significant effect in any species",
+       sub="adj.P < 0.05, log2FC > 1")
+
+
+
+```
+
+```{r vennDiagram2, echo=FALSE}
+
+spcs <- setNames(names(DE),names(DE))
+# combine peak/ramp and up/down significant groups
+lapply(spcs, function(spc){
+  unique(c( sigGrpIds$ramp$up[[spc]],
+            sigGrpIds$ramp$down[[spc]],
+            sigGrpIds$peak$up[[spc]],
+            sigGrpIds$peak$down[[spc]]))
+}) -> anySigGrpIds
+
+lapply(allClustersGrpIDs,function(loliumDEgrpIDs){
+  lapply(anySigGrpIds,function(grpIDs){
+    grpIDs[grpIDs %in% loliumDEgrpIDs]
+  })
+}) -> sigLoliumGrpIDs
+
+venn( data=sigLoliumGrpIDs$veyo[c("BrDi","HoVu","NaSt","MeNu1","StLa")])
+title( main="Any significant effect in Veyo",
+       sub="adj.P < 0.05, log2FC > 1")
+
+venn( data=sigLoliumGrpIDs$falster[c("BrDi","HoVu","NaSt","MeNu1","StLa")])
+title( main="Any significant effect in Falster",
+       sub="adj.P < 0.05, log2FC > 1")
+
+```
+
+The two above venn diagrams makes more sense when comparing with the one below which shows the overlap of significant groups in our data without considering the lolium data. 
+
+```{r vennDiagram3, echo=FALSE}
+
+venn( data=anySigGrpIds[c("BrDi","HoVu","NaSt","MeNu1","StLa")])
+title( main="Any significant effect",
+       sub="adj.P < 0.05, log2FC > 1")
+
+```
+
+There is a overlap between the lolium DEGs and the genes that are significant in all our species.
+
+```{r vennDiagram4, echo=FALSE}
+allSigGrpIds <- Reduce(intersect,anySigGrpIds[c("BrDi","HoVu","NaSt","MeNu1","StLa")])
+venn( data=list(AllOurSpecies=allSigGrpIds,
+                Falster=allClustersGrpIDs$falster,
+                Veyo=allClustersGrpIDs$veyo))
+title( main="Any significant effect",
+       sub="adj.P < 0.05, log2FC > 1")
+```
+
+However this is partly an artifact of the method of defining a group significant if atleast one of the paralogs are significant, which is much more likely when there are many paralogs. Only 3 of 47 genes are 1:1:1 orthologs
+
+```{r commonSign, echo=FALSE, eval=FALSE}
+inAll <- intersect(intersect(allSigGrpIds,allClustersGrpIDs$falster),allClustersGrpIDs$veyo)
+
+median(lens[inAll,])
+table(apply(lens[inAll, ]<5,1,all))
+table(apply(lens[apply(lens>0,1,all), ]<2,1,all))
+table(apply(lens==1,1,all))
+median(lens[sample(which(apply(lens>0,1,all)),size = length(allSigGrpIds)),])
+boxplot(lens[allSigGrpIds,])
+boxplot(lens[sample(which(apply(lens>0,1,all)),size = length(allSigGrpIds)),])
+```
+

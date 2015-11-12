@@ -45,3 +45,10 @@ grpToChar <- function(grp){
   seqsPerSpecies <- sapply(grp,length)
   paste(rep(names(seqsPerSpecies),seqsPerSpecies),unlist(grp),sep="|")
 }
+
+# given sequence IDs from a specific species, return the corresponding grpIDs
+seqIDtoGrpID <- function(grps, seqIDs, spcID){
+  flatSeqIDs <- unlist(grps[ ,spcID])
+  flatGrpIDs <- rep(rownames(grps),lapply(grps[ ,spcID],length))
+  flatGrpIDs[match(seqIDs, flatSeqIDs)]
+}

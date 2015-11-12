@@ -47,7 +47,7 @@ generateScript.ArrayRJob = function( job ){
     
     # generate SLURM job script
     createSLURMarray(commandListFile = "script/commands.txt",
-                     preScript = "module load R/3.1.3",
+                     preScript = "module load R/3.1.0",
                      workdir = outDir,
                      jobName = jobName,
                      arraySize = min(length(params$x),params$arraySize),

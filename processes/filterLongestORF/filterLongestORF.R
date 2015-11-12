@@ -1,17 +1,31 @@
 library(seqinr)
 library(data.table)
+library(stringr)
 
 
 filterFastaLongestORF <- function(inFasta, outFasta, outTable){
 
   ORF <- read.fasta(inFasta)
   
-  # check if seq name contains "_i" to denote isoform else seperate on "|"
-  sep <- ifelse( grepl("_i",names(ORF)[1]),"_i","\\|")
+  # Convert sequence names
+  # remove isoform part and pipes
+  if( grepl("_i",names(ORF)[1] )){
+    # These are our transcriptomes
+    # change names e.g "cds.TR100006|c0_g1_i1|m.887688" -> "TR100006_c0_g1"
+    nameNoIso <- sub("cds.(TR[0-9]+)\\|(c[0-9]+_g[0-9]+)_i.*","\\1_\\2",names(ORF),perl="T")
+  } else if( grepl("^cds\\.ENA",names(ORF)[1])) {
+    # this is the LoPe transcriptome
+    # format e.g.: cds.ENA|GAYX01000005|GAYX01000005.1|m.9
+    nameNoIso <- sub("cds.ENA\\|(GAYX[0-9]+)\\|.*","\\1",names(ORF),perl="T")
+  } else {
+    # this is the lolium falster transcriptome
+    # change names e.g "cds.f19713_c0s2|m.2" -> "f19713_c0s2"
+    nameNoIso <- sub("cds.(f[0-9]+_c[0-9]+s[0-9]+)\\|.*","\\1",names(ORF),perl="T")
+  }
   
   # create table with sequence length, name and name with isoform removed
   dt <- data.table(len = getLength(ORF), name = names(ORF),
-                   nameNoIso = unlist(lapply(strsplit(names(ORF),sep),"[",1)))
+                   nameNoIso = nameNoIso)
 
   # For each "gene", get rank order of the length of its isoforms
   dt[,isoLengthRank := rank(-len,ties.method = "first"),by=nameNoIso]
@@ -20,8 +34,8 @@ filterFastaLongestORF <- function(inFasta, outFasta, outTable){
   # Get names of the longest isoforms
   longestIso <- dt$name[ dt$isoLengthRank==1 ]
   
-  # change names e.g "cds.TR100006|c0_g1_i1|m.887688" -> TR100006_c0_g1
-  longestIsoNewName <- gsub("\\|","_",substring(dt$nameNoIso[ dt$isoLengthRank==1 ],5))
+  # New name is the corresponding nameNoIso
+  longestIsoNewName <- dt$nameNoIso[ dt$isoLengthRank==1 ]
   
   write.table(cbind(longestIsoNewName,longestIso), file = outTable,
               quote = F,row.names = F, col.names = F, sep="\t")

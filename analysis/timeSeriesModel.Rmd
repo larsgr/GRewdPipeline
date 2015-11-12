@@ -1,0 +1,461 @@
+---
+title: "Time series model"
+output: html_document
+---
+
+## Goal of analysis
+
+Fit the data to a model that takes the sampling times into account. Show that the model can identify genes that respond to the cold treatment by comparing with gene sets identified in other studies.
+
+```{r loadLibraries, echo=FALSE, message=FALSE}
+library(stringr)
+library(DESeq2)
+source("/mnt/users/lagr/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+
+```{r loadData, echo=FALSE, cache=TRUE}
+# define paths:
+pipelineOutDir <- "/mnt/NOBACKUP/mariansc/share"
+blastOutFile <- "/mnt/users/lagr/GRewd/pipeline/indata/genesOfInterrest2/COR_genes_VS_allProteomes.blastx"
+annotTblFile <- "/mnt/users/lagr/GRewd/pipeline/indata/genesOfInterrest2/TableS10.txt"
+
+# load expression data (inside DE results)
+load(file.path(pipelineOutDir,"orthos/DESeq/DE.RData"))
+
+
+# load annotation table
+annotTbl <- read.table(annotTblFile,sep="\t",header=T,stringsAsFactors = F)
+
+# load blast results
+bres <- read.table(blastOutFile, stringsAsFactors = F,
+                   col.names = c("qseqid", "sseqid", "pident", "length", 
+                                 "mismatch", "gapopen", "qstart", "qend",
+                                 "sstart", "send", "evalue", "bitscore"))
+
+
+# load groups
+grpsTbl <- loadOrthoGrpsTable(orthoGrpFile = file.path(pipelineOutDir,"orthos/orthoMCL/groups.txt"))
+grps <- OrthoGrpTableToArray(grpsTbl)
+
+goodGrpsTbl <- loadOrthoGrpsTable(file.path(pipelineOutDir,"orthos/splitGroups/goodGroups.txt"))
+goodGrps <- OrthoGrpTableToArray(goodGrpsTbl)
+
+```
+
+
+```{r coldGenes, echo=F, results="asis"}
+
+# get the Group IDs for the blast hits
+bres$grpID <- grpsTbl$grpID[ match(bres$sseqid, grpsTbl$seqID)]
+
+# make a table based on the annotTbl
+tbl <- data.frame( qseq = annotTbl$Contig,
+                   Chill_logFC = annotTbl$Dicktoo_Chill_logFC,
+                   stringsAsFactors = F)
+# for each blast query get the grp with best hit
+bresSub <- !is.na(bres$grpID)
+idx <- match(tbl$qseq,bres$qseqid[bresSub])
+tbl$bestHitWithGrp <- bres$sseqid[bresSub][idx]
+tbl$grpID <- bres$grpID[bresSub][idx]
+
+tbl$grpIDgood <- goodGrpsTbl$grpID[ match(tbl$bestHitWithGrp, goodGrpsTbl$seqID)]
+
+tbl$Annotation <- annotTbl$Annotation
+
+```
+
+## The model
+
+The samples were taken at four time-points:
+
+* T0: before cold treatment
+* T1: 8 hours after cold treatment started
+* T3: 4 weeks after cold treatment started
+* T4: 7 weeks after cold treatment started
+
+I want the model take into account that some genes alter expression within hours after the cold treatment (i.e. at T1) and other genes that have gradually increasing/decresing expression over weeks (such as vernalization genes).
+
+The model is:
+
+$$ y=\beta_0 + \beta_st_s+\beta_lt_l+\epsilon  $$
+
+where $\beta_s$ is the short term (peak) effect that explains differential expression at T1 ($t_s = 1$ if T1 else $t_s = 0$) and $\beta_l$ is the long term effect that explains gradual change over all time points ($t_l = 0,1,2,3$ for T0, T1, T3 and T4 respectively)
+
+## Reference data
+
+To test if the model can detect genes that react to cold we use a set of genes that have been identified in an earlier study, specifically the genes in table S10 "A core set of low-temperature responsive contigs in barley" from [Greenup et al. 2011](http://journals.plos.org/plosone/article?id=10.1371/journal.pone.0017900)
+
+The table contained the sequences of each gene which was aligned with our de-novo transcriptome assembly. 53 out of the 54 genes in the list matched one of 49 unique sequence in our transcriptome. The missing gene was **Contig3212_s_at** (Polyamine oxidase). 36 of those 49 belonged to one of 32 ortholog groups. The number of orthologs per transcriptome in these groups are listed below.
+
+
+
+```{r loadColdGenes, echo=FALSE}
+bres.coldgenes <- read.table("~/GRewd/pipeline/indata/genesOfInterrest2/coldInducedGenes_vs_HoVu.blastn",
+                             col.names = c("qseqid", "sseqid", "pident", "length", "mismatch", "gapopen", 
+                             "qstart", "qend", "sstart", "send", "evalue", "bitscore"),
+                   stringsAsFactors = F)
+
+# get best match
+coldGenes <- bres.coldgenes$sseqid[match(unique(bres.coldgenes$qseqid),bres.coldgenes$qseqid)]
+coldGenes <- unique(gsub("_i.+$","",gsub("\\|","_",unique(coldGenes))))
+
+# length(unique(Coldbres))
+
+HoVuflat <- unlist(grps[,"HoVu"])
+grpHoVuflat <- rep(rownames(grps),lens[,"HoVu"])
+
+
+Cold.grp <- grpHoVuflat[match(coldGenes,HoVuflat)]
+Cold.grp <- Cold.grp[!is.na(Cold.grp)]
+
+
+
+
+load("~/GRewd/pipeline/all_vs_all.out.index.RData") # bresIdx
+source("~/GRewd/pipeline/R/indexBlastResults.R")
+
+# select genes that belong to the cold response orthogroups
+seqId <- paste("HoVu",coldGenes[coldGenes %in% unlist(grps[Cold.grp,"HoVu"])],sep="|")
+
+# load indexed blast results for those genes
+bres <- do.call(rbind, loadIndexedBres(seqId, bresFileName, bresIdx) )
+# remove HoVu| from names and split sseqid into sspc and sseqid
+bres$sspc <- str_extract(bres$sseqid,"^[^|]+")
+bres$sseqid <- str_extract(bres$sseqid,"[^|]+$")
+bres$qseqid <- str_extract(bres$qseqid,"[^|]+$")
+
+# add grp which contains gene
+bres$grp <- grpHoVuflat[match(bres$qseqid,HoVuflat)]
+
+# keep only rows that match genes in grp and have best bitscore
+bresTop <- bres %>% 
+  group_by(grp, sspc) %>%
+  do({
+    filter(., .$sseqid %in% grps[[.$grp[1], .$sspc[1]]])
+  }) %>% 
+  top_n(1,bitscore)
+
+lens[unique(Cold.grp),]
+```
+
+
+
+## Results
+
+```{r calcDEseq, echo=FALSE, message=FALSE, cache=TRUE, eval=FALSE}
+spc <- "HoVu"
+countData <- round(exprCnt[[spc]][,!grepl("^wc_",colnames(exprCnt[[spc]]))])
+
+# filter low expressed genes less than 10 reads average
+countData <- countData[rowMeans(countData)>10, ]
+
+
+colData <- as.data.frame(str_split_fixed(colnames(countData),"\\.",4)[ ,1:3])
+#colData <- as.data.frame(str_split_fixed(sample(colnames(countData)),"\\.",4)[ ,1:3])
+names(colData) <- c("spcPop","timePoint","mix")
+
+TtoX <- c(T0=1,T1=2,T3=3,T4=4)
+colData$t_l <- TtoX[ colData$timePoint] - 1
+colData$t_s <- colData$t_l==1
+
+dds <- DESeqDataSetFromMatrix(countData = countData,
+                              colData = colData,
+                              design = formula(~ t_s + t_l))
+
+# estimate size factors
+dds <- estimateSizeFactors(dds)
+
+# estimate dispersion
+dds <- estimateDispersions(dds)
+#plotDispEsts(dds)
+
+# Test significance of short time effect (peak)
+ddsPeak <- nbinomLRT(dds, reduced = ~ t_l)
+
+# Test significance of long time effect (time)
+ddsTime <- nbinomLRT(dds, reduced = ~ t_s)
+
+```
+
+```{r plotEffectRanks, echo=FALSE, fig.height=7,fig.width=7, eval=FALSE}
+idx <- match(gsub("_i.+$","",gsub("\\|","_",unique(Coldbres))),rownames(countData))
+
+#sum(is.na(idx))/length(idx)
+idx <- idx[!is.na(idx)]
+
+len <- nrow(countData)
+
+idxRnd <- sample(x = 1:len,1000)
+
+plot(rank(results(ddsPeak)$stat)[idxRnd]/len,rank(results(ddsTime)$stat)[idxRnd]/len,
+     pch=20, col ="lightgrey", cex=0.5,
+     xlim=c(0,1),ylim=c(0,1), xlab="Short term effect rank", ylab="Long term effect rank")
+
+colLimit <- function(p1,p2,lt=0.05){
+  ifelse(is.na(p1),"green",ifelse(is.na(p2),"green",ifelse(pmin(p1,p2)<lt,"red","black")))
+}
+points(rank(results(ddsPeak)$stat)[idx]/len,rank(results(ddsTime)$stat)[idx]/len, pch=20,
+       col=colLimit(results(ddsPeak)$padj[idx],results(ddsTime)$padj[idx]))
+abline(v=min(rank(results(ddsPeak)$stat)[results(ddsPeak)$padj<0.05],na.rm = T)/len)
+abline(h=min(rank(results(ddsTime)$stat)[results(ddsTime)$padj<0.05],na.rm = T)/len)
+```
+
+```{r defFun, echo=FALSE,eval=FALSE}
+calcAndPlot <- function(countData,idx){
+  colData <- as.data.frame(str_split_fixed(colnames(countData),"\\.",4)[ ,1:3])
+  names(colData) <- c("spcPop","timePoint","mix")
+  
+  TtoX <- c(T0=1,T1=2,T3=3,T4=4)
+  colData$t_l <- TtoX[ colData$timePoint] - 1
+  colData$t_s <- colData$t_l==1
+  
+  dds <- DESeqDataSetFromMatrix(countData = countData,
+                                colData = colData,
+                                design = formula(~ t_s + t_l))
+  
+  # estimate size factors
+  dds <- estimateSizeFactors(dds)
+  
+  # estimate dispersion
+  dds <- estimateDispersions(dds)
+  #plotDispEsts(dds)
+  
+  # Test significance of short time effect (peak)
+  ddsPeak <- nbinomLRT(dds, reduced = ~ t_l)
+  
+  # Test significance of long time effect (time)
+  ddsTime <- nbinomLRT(dds, reduced = ~ t_s)
+  
+  
+}
+
+```
+
+```{r fitModel, echo=FALSE, message=FALSE, cache=TRUE}
+
+lapply(spcs, function(spc){
+  countData <- round(exprCnt[[spc]][,!grepl("^wc_",colnames(exprCnt[[spc]]))])
+  
+  # filter low expressed genes less than 10 reads average
+  countData <- countData[rowMeans(countData)>10, ]
+
+  colData <- as.data.frame(str_split_fixed(colnames(countData),"\\.",4)[ ,1:3])
+  names(colData) <- c("spcPop","timePoint","mix")
+  
+  TtoX <- c(T0=1,T1=2,T3=3,T4=4)
+  colData$t_l <- TtoX[ colData$timePoint] - 1
+  colData$t_s <- colData$t_l==1
+  
+  dds <- DESeqDataSetFromMatrix(countData = countData,
+                                colData = colData,
+                                design = formula(~ t_s + t_l))
+  
+  # estimate size factors
+  dds <- estimateSizeFactors(dds)
+  
+  # estimate dispersion
+  dds <- estimateDispersions(dds)
+  #plotDispEsts(dds)
+  
+  # Test significance of short time effect (peak)
+  ddsPeak <- nbinomLRT(dds, reduced = ~ t_l)
+  
+  # Test significance of long time effect (time)
+  ddsTime <- nbinomLRT(dds, reduced = ~ t_s)
+  return( list( betas = coef(ddsPeak), 
+                resPeak = results(ddsPeak),
+                resTime = results(ddsTime),
+                countData = countData,
+                colData = colData ) )
+}) -> fit
+
+```
+
+```{r plotAll, echo=FALSE, fig.height=7,fig.width=7}
+
+for( spc in c("BrDi","HoVu","MeNu1","MeNu2","StLa","NaSt")){
+
+  # idx <- match(gsub("_i.+$","",gsub("\\|","_",unique(Coldbres))),rownames(countData))
+  idx <- match(unlist(grps[ unique(Cold.grp), spc ]),rownames(fit[[spc]]$countData))
+  
+  #sum(is.na(idx))/length(idx)
+  idx <- idx[!is.na(idx)]
+  
+  idxTop <- match(unique(subset(bresTop, sspc==spc)$sseqid),rownames(fit[[spc]]$countData))
+  idxTop <- idxTop[!is.na(idxTop)]
+  
+  len <- nrow(fit[[spc]]$countData)
+  
+  idxRnd <- sample(x = 1:len,1000)
+  
+  plot(rank(fit[[spc]]$resPeak$stat)[idxRnd]/len,rank(fit[[spc]]$resTime$stat)[idxRnd]/len,
+       pch=20, col ="lightgrey", cex=0.5,
+       xlim=c(0,1),ylim=c(0,1), xlab="Short term effect rank", ylab="Long term effect rank")
+  
+  colLimit <- function(p1,p2,lt=0.05){
+    ifelse(is.na(p1),"green",ifelse(is.na(p2),"green",ifelse(pmin(p1,p2)<lt,"red","black")))
+  }
+
+  points(rank(fit[[spc]]$resPeak$stat)[idx]/len,rank(fit[[spc]]$resTime$stat)[idx]/len, pch=20,
+         col=colLimit(fit[[spc]]$resPeak$padj[idx],fit[[spc]]$resTime$padj[idx]))
+
+  points(rank(fit[[spc]]$resPeak$stat)[idxTop]/len,rank(fit[[spc]]$resTime$stat)[idxTop]/len,
+         cex=2)
+  
+  abline(v=min(rank(fit[[spc]]$resPeak$stat)[ fit[[spc]]$resPeak$padj<0.05],na.rm = T)/len)
+  abline(h=min(rank(fit[[spc]]$resTime$stat)[ fit[[spc]]$resTime$padj<0.05],na.rm = T)/len)
+
+  title(main = spc)
+}
+```
+
+
+```{r plotRanksNextToEachOther, echo=FALSE, message=FALSE, cache=TRUE, fig.height=5,fig.width=7}
+lapply( spcs, function(spc){
+  idx <- match(unlist(grps[ unique(Cold.grp), spc ]),rownames(fit[[spc]]$countData))
+  idx <- idx[!is.na(idx)]
+  
+  idxTop <- match(unique(subset(bresTop, sspc==spc)$sseqid),rownames(fit[[spc]]$countData))
+  idxTop <- idxTop[!is.na(idxTop)]
+  
+  len <- nrow(fit[[spc]]$countData)
+
+  return( list( peakRank = rank(fit[[spc]]$resPeak$stat)[idx]/len,
+                timeRank = rank(fit[[spc]]$resTime$stat)[idx]/len,
+                peakRankTop = rank(fit[[spc]]$resPeak$stat)[idxTop]/len,
+                timeRankTop = rank(fit[[spc]]$resTime$stat)[idxTop]/len ))
+}) -> allRanks
+
+plot( x=NULL, xlim=c(0.5,0.5+length(spcs)),ylim=c(0,1), 
+      ylab="significance rank", xaxt="n", xlab="",
+      main="peak effect",sub="all orthologs (blue) and best hit only(pink)")
+axis(1,at=1:length(spcs),label=spcs)
+for(i in 1:length(spcs)){
+  y=allRanks[[i]]$peakRank
+#   points(x=rep(i,length(y)),y=y)
+  boxplot(y,add=T, at=i-0.15,boxwex = 0.4, axes = FALSE, col="lightblue")
+  y=allRanks[[i]]$peakRankTop
+#   points(x=rep(i,length(y)),y=y,col="red")
+  boxplot(y,add=T, at=i+0.15,boxwex = 0.4, axes = FALSE,col="pink")
+}
+
+plot( x=NULL, xlim=c(0.5,0.5+length(spcs)),ylim=c(0,1), 
+      ylab="significance rank", xaxt="n", xlab="",
+      main="ramp effect",sub="all orthologs (blue) and best hit only(pink)")
+axis(1,at=1:length(spcs),label=spcs)
+# plot( x=NULL, xlim=c(1,length(spcs)),ylim=c(0,1), ylab="significance rank", xaxt="n", xlab="",
+#       main="ramp effect (best matching orthologs)")
+# axis(1,at=1:length(spcs),label=spcs)
+for(i in 1:length(spcs)){
+  y=allRanks[[i]]$timeRank
+  boxplot(y,add=T, at=i-0.15,boxwex = 0.4, axes = FALSE, col="lightblue")
+  y=allRanks[[i]]$timeRankTop
+  boxplot(y,add=T, at=i+0.15,boxwex = 0.4, axes = FALSE,col="pink")
+#   y=allRanks[[i]]$timeRankTop
+#   boxplot(y,add=T, at=i, axes = FALSE)
+}
+```
+
+
+```{r plotSignedRanksNextToEachOther, echo=FALSE, message=FALSE, cache=TRUE, fig.height=5,fig.width=7}
+lapply( spcs, function(spc){
+  idx <- match(unlist(grps[ unique(Cold.grp), spc ]),rownames(fit[[spc]]$countData))
+  idx <- idx[!is.na(idx)]
+  
+  idxTop <- match(subset(bresTop, sspc==spc)$sseqid,rownames(fit[[spc]]$countData))
+  grpTop <- subset(bresTop, sspc==spc)$grp
+  idxTop <- idxTop[!is.na(idxTop)]
+  grpTop <- grpTop[!is.na(idxTop)]
+  
+  len <- nrow(fit[[spc]]$countData)
+
+  return( list( peakRank = rank(fit[[spc]]$resPeak$stat)[idx]/len *
+                  sign(fit[[spc]]$betas[idx,"t_sTRUE"]),
+                timeRank = rank(fit[[spc]]$resTime$stat)[idx]/len *
+                  sign(fit[[spc]]$betas[idx,"t_l"]),
+                peakRankTop = rank(fit[[spc]]$resPeak$stat)[idxTop]/len *
+                  sign(fit[[spc]]$betas[idxTop,"t_sTRUE"]),
+                timeRankTop = rank(fit[[spc]]$resTime$stat)[idxTop]/len *
+                  sign(fit[[spc]]$betas[idxTop,"t_l"]),
+                grpTop = grpTop ))  
+  
+}) -> allSignedRanks
+
+plot( x=NULL, xlim=c(0.5,0.5+length(spcs)),ylim=c(-1,1), 
+      ylab="significance rank", xaxt="n", xlab="",
+      main="peak effect (with direction)")
+axis(1,at=1:length(spcs),label=spcs)
+for(i in 1:length(spcs)){
+  
+  y=allSignedRanks[[i]]$peakRank
+  boxplot(y[y>0],add=T, at=i-0.15,boxwex = 0.4, axes = FALSE, col="lightblue")
+  boxplot(y[y<0],add=T, at=i-0.15,boxwex = 0.4, axes = FALSE, col="lightblue")
+
+  y=allSignedRanks[[i]]$peakRankTop
+  boxplot(y[y>0],add=T, at=i+0.15,boxwex = 0.4, axes = FALSE,col="pink")  
+  boxplot(y[y<0],add=T, at=i+0.15,boxwex = 0.4, axes = FALSE,col="pink")  
+}
+
+
+plot( x=NULL, xlim=c(0.5,0.5+length(spcs)),ylim=c(-1,1), 
+      ylab="significance rank", xaxt="n", xlab="",
+      main="ramp effect (with direction)")
+axis(1,at=1:length(spcs),label=spcs)
+for(i in 1:length(spcs)){
+  
+  y=allSignedRanks[[i]]$timeRank
+#   points(x=rep(i,length(y)),y=y,pch=20,cex=0.5,col="blue")
+  boxplot(y[y>0],add=T, at=i-0.15,boxwex = 0.4, axes = FALSE, col="lightblue")
+  boxplot(y[y<0],add=T, at=i-0.15,boxwex = 0.4, axes = FALSE, col="lightblue")
+
+  y=allSignedRanks[[i]]$timeRankTop
+#   points(x=rep(i,length(y)),y=y,col="red",cex=0.7)
+  boxplot(y[y>0],add=T, at=i+0.15,boxwex = 0.4, axes = FALSE,col="pink")  
+  boxplot(y[y<0],add=T, at=i+0.15,boxwex = 0.4, axes = FALSE,col="pink")  
+
+
+}
+
+```
+
+## Which orthologs are in the same group
+```{r joinTheDots, echo=FALSE, message=FALSE, cache=TRUE, fig.height=5,fig.width=7}
+
+plot( x=NULL, xlim=c(0.5,0.5+length(spcs)),ylim=c(-1,1), 
+      ylab="significance rank", xaxt="n", xlab="",
+      main="Joined dots (peak effect with direction)")
+axis(1,at=1:length(spcs),label=spcs)
+for(i in 1:length(spcs)){
+  y=allSignedRanks[[i]]$peakRankTop
+  points(x=rep(i,length(y)),y=y,col="red",cex=0.7)
+}
+
+for( grp in allSignedRanks$HoVu$grpTop){
+  sapply(1:length(spcs), function(i){
+    y <- allSignedRanks[[i]]$peakRankTop[match(grp,allSignedRanks[[i]]$grpTop)]
+    return( list( x=i, y=y))
+  }) -> xy
+  lines(xy["x",],xy["y", ])
+}
+
+
+plot( x=NULL, xlim=c(0.5,0.5+length(spcs)),ylim=c(-1,1), 
+      ylab="significance rank", xaxt="n", xlab="",
+      main="Joined dots (ramp effect with direction)")
+axis(1,at=1:length(spcs),label=spcs)
+for(i in 1:length(spcs)){
+  y=allSignedRanks[[i]]$timeRankTop
+  points(x=rep(i,length(y)),y=y,col="red",cex=0.7)
+}
+
+for( grp in allSignedRanks$HoVu$grpTop){
+  sapply(1:length(spcs), function(i){
+    y <- allSignedRanks[[i]]$timeRankTop[match(grp,allSignedRanks[[i]]$grpTop)]
+    return( list( x=i, y=y))
+  }) -> xy
+  lines(xy["x",],xy["y", ])
+}
+
+```
+

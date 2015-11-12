@@ -1,0 +1,164 @@
+---
+title: "Supergene Clustering"
+output: html_document
+---
+
+
+```{r loadLibraries, echo=FALSE, message=FALSE}
+library(DESeq2)
+library(WGCNA)
+
+
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+```{r loadData, echo=FALSE}
+orthoPath <- "/mnt/NOBACKUP/mariansc/share/orthos"
+
+
+modulesVST.File <- "~/GRewd/pipeline/data/modulesVST.RDS"
+modulesDE.File <- "~/GRewd/pipeline/data/modulesDE.RDS"
+pamlResFile <- "~/GRewd/pipeline/data/pamlRes.RDS"
+DEnewFile <- "~/GRewd/pipeline/data/DEnew.RDS"
+VSTnewFile <- "~/GRewd/pipeline/data/VSTnew.RDS"
+superExprMatrixFile <- "~/GRewd/pipeline/data/superExprMatrix.RDS"
+
+# load DE
+load(file.path(orthoPath,"DESeq/DE.RData"))
+
+# load superGenes expression
+expr <- readRDS(file = superExprMatrixFile)  
+# load DE based and vst based on superGenes
+DEnew <- readRDS(DEnewFile)  
+vst <- readRDS(VSTnewFile)
+
+
+# convert DE results to matrix format
+lapply( list( peak="resPeak", ramp="resRamp"), function( peakOrRamp ){
+  lapply( list( pVal="pvalue", pAdj="padj", stat="stat",lfc="log2FoldChange"), function( stat ){
+    m <- sapply(DEnew, function(DEspc){DEspc[[peakOrRamp]][[stat]]})
+    rownames(m) <- rownames(expr)
+    return(m)
+  })
+}) -> DEmat
+
+# load groups
+grpData <- readRDS(file.path(orthoPath,"splitGroups/goodTreeStats.rds"))
+grps <- loadOrthoGrpsArray(file.path(orthoPath,"splitGroups/goodGroups.txt"))
+
+```
+
+```{r loadPAMLresults, echo=FALSE}
+pamlRes <- readRDS(pamlResFile) 
+
+# remove NA's in H4a (probably caused by trees where the core clade is on the root and can't be marked)
+pamlRes$H4a <- pamlRes$H4a[!is.na(pamlRes$H4a$pVal), ]
+
+
+# convert to matrix of p-values
+pamlMat <- sapply(pamlRes, with, {pVal[match(rownames(expr),grpID)]})
+
+```
+
+
+### Find gene clusters in the variance stabilized supergene matrix using WGCNA
+
+```{r findModules, echo=FALSE}
+if( !file.exists(modulesVST.File)){
+  modulesVST <- blockwiseModules(datExpr = t(vst), power=10, minModuleSize=40, minAbsSplitHeight=0.1)
+  saveRDS(modulesVST,modulesVST.File)
+} else{
+  modulesVST <- readRDS(modulesVST.File)  
+}
+```
+
+```{r plotModulesVST, echo=FALSE}
+#plot(table(modules$colors))
+m <- as.matrix(modulesVST$MEs)
+rownames(m) <- colnames(vst)
+heatmap(m,scale="none")
+```
+
+### Test for over-representation of positive selection in modules
+
+```{r testPhyperVST, echo=FALSE}
+
+sapply(unique(modulesVST$colors), function(mod){
+  sapply(colnames(pamlMat), function(hyp){
+    idx <- !is.na(pamlMat[ ,hyp])
+    phyper(q = sum(modulesVST$colors[idx]==mod & pamlMat[idx,hyp] < 0.05),
+           m = sum(pamlMat[idx,hyp] < 0.05),
+           n = sum(pamlMat[idx,hyp] >= 0.05),
+           k = sum(modulesVST$colors[idx]==mod),
+           lower.tail=F)  
+  })
+}) -> pHyp.VST
+
+```
+
+```{r}
+table(pHyp.VST<0.05)
+min(pHyp.VST)
+table(p.adjust(pHyp.VST,method = "BH")<0.05)
+```
+
+
+### Find gene clusters in the DE stat matrix using WGCNA
+
+```{r findModulesDE, echo=FALSE, cache=TRUE}
+statMat <- cbind(DEmat$peak$stat,DEmat$ramp$stat)
+colnames(statMat) <- paste0(rep(c("peak","ramp"),each=5),colnames(statMat))
+
+if( !file.exists(modulesDE.File)){
+  modulesDE <- blockwiseModules(datExpr = t(statMat), power=10, minModuleSize=40, 
+                                minAbsSplitHeight=0.1)
+  saveRDS(modulesDE,modulesDE.File)
+} else{
+  modulesDE <- readRDS(modulesDE.File)  
+}
+```
+
+
+```{r plotModulesDE, echo=FALSE}
+#plot(table(modulesDE$colors))
+m <- as.matrix(modulesDE$MEs)
+rownames(m) <- colnames(statMat)
+heatmap(t(m),scale="none", breaks=c(-20,seq(-5.5,5.5,by=1),20),
+        col=colorRampPalette(c("green","black","red"))(13))
+
+```
+
+
+The eigengenes seems to be very faint, and the reason might be that both positive and negative correlation is clustered together. Here is the one of the modules:
+
+```{r plotBrownModule, echo=FALSE}
+ColSideColors <- as.character(cut(modulesDE$MEs$MEbrown,breaks=c(-20,seq(-5.5,5.5,by=1),20),labels = colorRampPalette(c("green","black","red"))(13)))
+heatmap(statMat[modulesDE$colors == "brown", ],scale="none",ColSideColors = ColSideColors,
+        breaks=c(-20,seq(-5.5,5.5,by=1),20),
+        col=colorRampPalette(c("green","black","red"))(13))
+```
+
+
+### Test for over-representation of positive selection in modules
+
+```{r testPhyperDE, echo=FALSE}
+
+sapply(unique(modulesDE$colors), function(mod){
+  sapply(colnames(pamlMat), function(hyp){
+    idx <- !is.na(pamlMat[ ,hyp])
+    phyper(q = sum(modulesDE$colors[idx]==mod & pamlMat[idx,hyp] < 0.05),
+           m = sum(pamlMat[idx,hyp] < 0.05),
+           n = sum(pamlMat[idx,hyp] >= 0.05),
+           k = sum(modulesDE$colors[idx]==mod),
+           lower.tail=F)  
+  })
+}) -> pHyp.DE
+
+```
+
+```{r}
+table(pHyp.DE<0.05)
+min(pHyp.DE)
+table(p.adjust(pHyp.DE,method = "BH")<0.05)
+```
+

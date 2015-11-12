@@ -1,0 +1,524 @@
+---
+title: "Compare models"
+output: html_document
+---
+
+
+```{r loadLibraries, echo=FALSE, message=FALSE}
+library(stringr)
+library(DESeq2)
+library(cluster)
+library(RColorBrewer)
+source("/mnt/users/lagr/networkSimilarity/R/loadOrthoGroups.R")
+```
+
+```{r loadData, echo=FALSE, cache=TRUE}
+pipelineOutDir <- "/mnt/NOBACKUP/mariansc/share"
+tblDir <- file.path(pipelineOutDir,"orthos/exprTbls")
+
+
+
+grps <- loadOrthoGrpsArray(orthoGrpFile = file.path(pipelineOutDir,"orthos/orthoMCL/groups.txt"))
+
+
+grp11Cnt <- read.table(file = file.path(tblDir,"grpSingletonCountTbl.txt"), 
+                       stringsAsFactors = F)
+
+# files <- dir(tblDir,pattern="_expected_countTbl.txt",full.names = T)
+# exprCnt <- lapply(setNames(files,str_extract(basename(files),"^[^_]+")), 
+#                   read.table, stringsAsFactors = F)
+
+spcs <- c("BrDi","HoVu","MeNu1","MeNu2","StLa","NaSt")
+names(spcs) <- spcs
+
+# get number of genes per species per group
+lens <- unlist(lapply(grps,length))
+dim(lens) <- dim(grps)
+dimnames(lens) <- dimnames(grps)
+
+```
+
+```{r fitModel, echo=FALSE, message=FALSE, cache=TRUE}
+
+lapply(spcs, function(spc){
+  countData <- round(grp11Cnt[,grepl(paste0("^",spc),colnames(grp11Cnt))])
+  
+  # filter low expressed genes less than 10 reads average
+#   countData <- countData[rowMeans(countData)>10, ]
+
+  colData <- as.data.frame(str_split_fixed(colnames(countData),"\\.",4)[ ,1:3])
+  names(colData) <- c("spcPop","timePoint","mix")
+  
+  dds <- DESeqDataSetFromMatrix(countData = countData,
+                                colData = colData,
+                                design = formula(~ timePoint))
+  
+  #plotDispEsts(dds)
+  dds <- DESeq(dds)
+
+  return( list( betas = coef(dds), 
+                resPeak = results(dds,contrast=c("timePoint","T1","T0")),
+                resTime = results(dds,contrast=c("timePoint",
+                                                 ifelse(spc=="BrDi","T3","T4"),
+                                                 "T0")),
+                countData = countData,
+                colData = colData ) )
+}) -> fit2
+# 
+# lapply(spcs, function(spc){
+#   countData <- round(grp11Cnt[,grepl(paste0("^",spc),colnames(grp11Cnt))])
+#   
+#   # filter low expressed genes less than 10 reads average
+# #   countData <- countData[rowMeans(countData)>10, ]
+# 
+#   colData <- as.data.frame(str_split_fixed(colnames(countData),"\\.",4)[ ,1:3])
+#   names(colData) <- c("spcPop","timePoint","mix")
+#   
+#   TtoX <- c(T0=1,T1=2,T3=3,T4=4)
+#   colData$t_l <- TtoX[ colData$timePoint] - 1
+#   colData$t_s <- colData$t_l==1
+#   
+#   dds <- DESeqDataSetFromMatrix(countData = countData,
+#                                 colData = colData,
+#                                 design = formula(~ t_s + t_l))
+#   # estimate size factors
+#   dds <- estimateSizeFactors(dds)
+#   
+#   # estimate dispersion
+#   dds <- estimateDispersions(dds)
+# 
+#   # Test significance of short time effect (peak)
+#   ddsPeak <- nbinomLRT(dds, reduced = ~ t_l)
+#   
+#   # Test significance of long time effect (time)
+#   ddsTime <- nbinomLRT(dds, reduced = ~ t_s)
+#   return( list( betas = coef(ddsPeak), 
+#                 resPeak = results(ddsPeak),
+#                 resTime = results(ddsTime),
+#                 countData = countData,
+#                 colData = colData ) )
+# 
+# }) -> fit
+
+
+```
+
+
+```{r}
+countData <- round(grp11Cnt[,!grepl(paste0("^wc"),colnames(grp11Cnt))])
+
+# filter low expressed genes less than 10 reads average
+#   countData <- countData[rowMeans(countData)>10, ]
+
+colData <- as.data.frame(str_split_fixed(colnames(countData),"\\.",4)[ ,1:3])
+names(colData) <- c("spcPop","timePoint","mix")
+colData$spcAsm <- as.factor(str_extract(colData$spcPop,paste(spcs,collapse="|")))
+colData$x <- as.factor(paste(colData$spcAsm,colData$timePoint,sep="."))
+
+
+dds <- DESeqDataSetFromMatrix(countData = countData,
+                              colData = colData,
+                              design = formula(~ -1 + x))
+
+
+dds <- DESeq(dds, betaPrior=FALSE)
+
+plotDispEsts(dds1)
+
+idx <- grepl("BrDi|StLa",colnames(countData)) & grepl("T0|T1",colnames(countData))
+colData1 <- colData[idx,]
+dds1 <- DESeqDataSetFromMatrix(countData = countData[ ,idx],
+                              colData = colData1,
+                              design = formula(~ -1 + spcAsm * timePoint))
+
+sizeFactors(dds1) <- sizeFactors(dds)[idx]
+
+# dispersionFunction(dds1) <- dispersionFunction(dds)
+dispersions(dds1) <- dispersions(dds)
+
+dds1 <- nbinomLRT(dds1, reduced = ~ -1  + spcAsm + timePoint)
+results(dds1)[order(results(dds1)$padj)[100:105],]
+plotNormGrp11Profile("grp110710")
+
+resultsNames(dds1)
+table(results(dds,contrast=c("x","HoVu.T0","BrDi.T0"))$padj<0.01)
+vsd <- varianceStabilizingTransformation(dds)
+```
+
+```{r calcRanks, echo=FALSE}
+
+# convert p-values and coefficients into comparable values
+calcSignificanceRanks <- function( fit, res, beta){
+  do.call( cbind,lapply( spcs, function(spc){
+    isUp <- fit[[spc]]$betas[,beta]>0
+    isUp[is.na(isUp)] <- FALSE # just to get rid of NA's
+    ranks <- numeric(length(isUp))
+    ranks[isUp] <- rank(fit[[spc]][[res]]$stat[isUp])/sum(isUp)
+    ranks[!isUp] <- -rank(fit[[spc]][[res]]$stat[!isUp])/sum(!isUp)
+    return(ranks)
+  }))
+}
+
+calcSignificanceRanks2 <- function( fit, res){
+  do.call( cbind,lapply( spcs, function(spc){
+    isUp <- fit[[spc]][[res]]$log2FoldChange>0
+    isUp[is.na(isUp)] <- FALSE # just to get rid of NA's
+    ranks <- numeric(length(isUp))
+    ranks[isUp] <- rank(fit[[spc]][[res]]$stat[isUp])/sum(isUp)
+    ranks[!isUp] <- rank(fit[[spc]][[res]]$stat[!isUp])/sum(!isUp) - 1
+    return(ranks)
+  }))
+}
+
+
+# peakRanks <- calcSignificanceRanks(fit,"resPeak","t_sTRUE")
+peakRanks2 <- calcSignificanceRanks2(fit2,"resPeak")
+# rampRanks <- calcSignificanceRanks(fit,"resTime","t_l")
+rampRanks2 <- calcSignificanceRanks2(fit2,"resTime")
+
+
+# plot(peakRanks[,"BrDi"] ,peakRanks2[,"BrDi"])
+# heatmap(cor(cbind(peakRanks,peakRanks2)),scale="none")
+# heatmap(cor(cbind(rampRanks,rampRanks2)),scale="none")
+# 
+# 
+# 
+# allBetas <- do.call(cbind,lapply(fit2, "[[","betas"))
+# colnames(allBetas) <- paste(colnames(allBetas),rep(spcs,c(4,5,5,5,5,5)))
+# heatmap(cor(allBetas,use = "pairwise.complete.obs"),scale="none")
+
+# 
+# heatmap(cor(peakRanks),scale="none")
+# heatmap(cor(rampRanks^5),scale="none")
+# rowMeans(cor(rampRanks))
+# rowMeans(cor(peakRanks))
+# 
+# pca <- prcomp(t(cbind(rampRanks,peakRanks)))
+# plot(pca)
+# 
+# spcColors <- c(BrDi="#00A0B0", HoVu="#6A4A3C", MeNu1="#CC333F",
+#                MeNu2="#EB6841", NaSt="#EDC951", StLa="#2ECC71")
+# 
+# plot(pca$x[,"PC3"],pca$x[,"PC2"], col=spcColors[rownames(pca$x)],
+#      pch=rep(c(20,25), each=6),cex=2)
+# legend("bottomleft",legend=rownames(pca$x),pch=20,pt.cex=2,col=spcColors[rownames(pca$x)])
+# 
+# 
+# plot(rampRanks[,"MeNu1"]^5,rampRanks[,"MeNu2"]^5)
+# 
+# myColors <- colorRampPalette(rev(brewer.pal(11,'Spectral')))(32)
+# ggplot(as.data.frame(peakRanks), aes(BrDi,MeNu2)) + 
+#   stat_bin2d(binwidth =c(1/4,1/4)) + 
+#   scale_fill_gradientn(colours=myColors) +
+#   theme_classic()
+# 
+# 
+# 
+# X <- peakAdjCoef
+# 
+# K <- 11
+# avstands.tabell <- dist( X )
+# # avstands.tabell <- 1-cor( t( X ) )
+# clst <- pam( avstands.tabell, k=K, diss=T )
+# 
+# # par( mfrow=c( ceiling(K/2), 2 ) )
+# cols <- brewer.pal(11,"Spectral")
+# for( i in 1:K ){
+#   idx <- which( clst$clustering == i )
+#   size <- length( idx )
+#   matplot( t( X[idx,] ), type="b", pch=16, cex=0.5, col="gray", ylim=range(X), xlim=c(1,6), xaxp=c(-1, 7, 1 ), xlab="", ylab="rank(stat)*sign(beta)", main=paste( "Cluster ", i, " (", size, " orthoGroups)", sep="" ) )
+#   points( X[clst$id.med[i],], type="b", pch=16, lwd=2, col=cols[i], )
+#   axis( 1, at=1:6, labels=colnames(X), cex.axis=0.75, las=2 )
+# }
+# 
+# par( mfrow=c( 1,1 ) )
+# RColorBrewer::display.brewer.pal(11,"Spectral")
+
+```
+
+```{r}
+
+padjs.m <- sapply(fit2, function(x){x$resTime$padj})
+stats.m <- sapply(fit2, function(x){x$resTime$stat})
+stats.m[is.na(stats.m)] <- 1
+padjs.m[is.na(padjs.m)] <- 1
+
+
+m <- (padjs.m < 0.01)*sign(stats.m)
+
+x <-  as.array(table(HoVu=m[,"HoVu"],NaSt=m[,"NaSt"],StLa=m[,"StLa"],
+                     MeNu1=m[,"MeNu1"],MeNu2=m[,"MeNu2"]))
+
+lapply(1:1000, FUN=function(i){
+  m.rnd <- apply(m,2,sample)
+  as.array(table(HoVu=m.rnd[,"HoVu"],NaSt=m.rnd[,"NaSt"],
+                           StLa=m.rnd[,"StLa"],MeNu1=m.rnd[,"MeNu1"],
+                           MeNu2=m.rnd[,"MeNu2"]))
+}) -> X
+
+nHigher <- x*0
+for(i in 1:1000){
+  nHigher <- nHigher + (x>X[[i]])
+}
+
+which(nHigher>990,arr.ind = T)
+nHigher["0","-1","-1", , ]
+x[ , ,"-1","-1","-1"]
+which(   0==m[,"HoVu"] & 
+         1==m[,"NaSt"] &
+        -1==m[,"StLa"] &
+        -1==m[,"MeNu1"] &
+        -1==m[,"MeNu2"] ) -> idx
+
+fit2$NaSt$resPeak[idx , ]
+plotNormGrp11Profile("grp110044")
+plotGrp11Profile("grp110044")
+plotNormGrp11Profile("grp110639")
+plotGrp11Profile("grp110639")
+plotGrp11Profile("grp111300")
+plotGrp11Profile("grp111818")
+grps["grp110639","Bd_R"]
+
+plotGrp11Profile("grp110292")
+plotGrp11Profile("grp111243")
+
+highSignific <- apply(padjs.m,1,min)<0.001
+highSignific <- rowSums(-log10(padjs.m))>10
+table(highSignific)
+hist(stats.m)
+range(stats.m)
+
+heatmap(cor(stats.m[highSignific, ]),scale="none")
+
+heatmap(stats.m[highSignific, ],scale="none", breaks=seq(-50,40,length.out = 22),
+        col=colorRampPalette(c("magenta","magenta","magenta","magenta","red","black","green","cyan","cyan","cyan"))(21))
+heatmap(peakRanks2^3,scale="none", breaks=seq(-1,1,length.out = 22),
+        col=colorRampPalette(c("red","black","green"))(21),main="Peak response")
+heatmap(rampRanks2^3,scale="none", breaks=seq(-1,1,length.out = 22),
+        col=colorRampPalette(c("red","black","green"))(21),main="Ramp response")
+
+hist(peakRanks2[,"HoVu"]^3)
+
+```
+
+```{r}
+# plot profile grp11Cnt
+normExpr <- assay(vsd)
+dimnames(normExpr) <- dimnames(countData)
+
+plotNormGrp11Profile <- function(grp){
+  
+  layout(matrix(c(1:6), 1, 6, byrow = T),
+     widths=rep(2,6), heights=c(2.5))
+  par(mar=c(5, 3, 4, 0))
+  TtoX <- c(T0=1,T1=2,T3=3,T4=4)
+  
+  
+  grpExpr <- normExpr[grp,]
+  # get same scale for all species
+  ylim <- range(grpExpr)
+  
+  
+  for(spc in spcs){
+  
+    expCnt <- grpExpr[grepl(paste0("^",spc),names(grpExpr))]
+  
+    plot(x=NULL,xaxt="n",main=spc,xlab="",xlim=range(TtoX), ylim=ylim)
+    if(spc==spcs[1]){
+      title(ylab="expression log2",line=2)
+    }
+    axis(1,at=TtoX,labels=names(TtoX)) 
+    
+    timePoint = str_extract(names(expCnt),"T[0-4]")
+  
+    points(x=TtoX[timePoint],y=expCnt, 
+           pch=ifelse(grepl("mix",names(expCnt)),20,1))
+    xMean <- tapply(as.numeric(expCnt),timePoint,mean)
+    lines(x=TtoX[names(xMean)],y=xMean)
+  }
+  
+  # reset graphics parameters
+  layout(1)
+  par(mar=c(5, 4, 4, 2) + 0.1)
+}
+
+
+
+plotGrp11Profile <- function(grp){
+  
+  layout(matrix(c(1:6), 1, 6, byrow = T),
+     widths=rep(2,6), heights=c(2.5))
+  par(mar=c(5, 3, 4, 0))
+  TtoX <- c(T0=1,T1=2,T3=3,T4=4)
+  
+  
+  grpExpr <- log2(1+grp11Cnt[grp,])
+  # get same scale for all species
+  ylim <- range(grpExpr)
+  
+  
+  for(spc in spcs){
+  
+    expCnt <- grpExpr[grepl(paste0("^",spc),names(grpExpr))]
+  
+    plot(x=NULL,xaxt="n",main=spc,xlab="",xlim=range(TtoX), ylim=ylim)
+    if(spc==spcs[1]){
+      title(ylab="log2(expCnt+1)",line=2)
+    }
+    axis(1,at=TtoX,labels=names(TtoX)) 
+    
+    timePoint = str_extract(names(expCnt),"T[0-4]")
+  
+    points(x=TtoX[timePoint],y=expCnt, 
+           pch=ifelse(grepl("mix",names(expCnt)),20,1))
+    xMean <- tapply(as.numeric(expCnt),timePoint,mean)
+    lines(x=TtoX[names(xMean)],y=xMean)
+  }
+  
+  # reset graphics parameters
+  layout(1)
+  par(mar=c(5, 4, 4, 2) + 0.1)
+}
+```
+
+
+## Distances and correlations between species
+
+```{r plotSpeciesDistances, echo=FALSE}
+# x <- cbind(peakRanks2,rampRanks2)
+# colnames(x) <- paste(colnames(x),rep(c("peak","ramp"),each=6))
+# heatmap(cor(x,use="pairwise.complete.obs"),scale="none")
+
+# plot dendrogram and heatmap for peak effect
+plot(hclust(as.dist(1-cor(peakRanks2,use="pairwise.complete.obs"))),
+     main="Peak effect correlation")
+
+plot(hclust(dist(t(peakRanks2))),  main="Peak effect euclidean")
+
+heatmap(cor(peakRanks2,use="pairwise.complete.obs"),scale="none")
+
+
+# plot dendrogram and heatmap for ramp effect
+plot(hclust(as.dist(1-cor(rampRanks2,use="pairwise.complete.obs"))),
+     main="Ramp effect correlation")
+
+plot(hclust(dist(t(rampRanks2))),  main="Ramp effect euclidean")
+
+heatmap(cor(rampRanks2,use="pairwise.complete.obs"),scale="none")
+
+```
+
+
+## K-means clustering of ramp effect
+
+```{r KmeansRamp, echo=FALSE}
+X <- rampRanks2[highSignific, ]
+
+K <- 11
+avstands.tabell <- dist( X )
+# avstands.tabell <- 1-cor( t( X ) )
+clst <- pam( avstands.tabell, k=K, diss=T )
+
+# par( mfrow=c( ceiling(K/2), 2 ) )
+cols <- brewer.pal(11,"Spectral")
+for( i in 1:K ){
+  idx <- which( clst$clustering == i )
+  size <- length( idx )
+  matplot( t( X[idx,] ), type="b", pch=16, cex=0.5, col="gray", 
+           ylim=range(X), xlim=c(1,6), xaxp=c(-1, 7, 1 ), 
+           xlab="", ylab="Ramp effect", 
+           main=paste0( "Cluster ", i, " (", size, " orthoGroups)") )
+  points( X[clst$id.med[i],], type="b", pch=16, lwd=2, col=cols[i], )
+  axis( 1, at=1:6, labels=colnames(X), cex.axis=0.75, las=2 )
+}
+
+# par( mfrow=c( 1,1 ) )
+
+```
+
+## K-means clustering of peak effect
+
+```{r KmeansPeak, echo=FALSE}
+X <- peakRanks2
+
+K <- 11
+avstands.tabell <- dist( X )
+# avstands.tabell <- 1-cor( t( X ) )
+clst <- pam( avstands.tabell, k=K, diss=T )
+
+# par( mfrow=c( ceiling(K/2), 2 ) )
+cols <- brewer.pal(11,"Spectral")
+for( i in 1:K ){
+  idx <- which( clst$clustering == i )
+  size <- length( idx )
+  matplot( t( X[idx,] ), type="b", pch=16, cex=0.5, col="gray", ylim=range(X), xlim=c(1,6), xaxp=c(-1, 7, 1 ), xlab="", ylab="Peak effect", main=paste( "Cluster ", i, " (", size, " orthoGroups)", sep="" ) )
+  points( X[clst$id.med[i],], type="b", pch=16, lwd=2, col=cols[i], )
+  axis( 1, at=1:6, labels=colnames(X), cex.axis=0.75, las=2 )
+}
+
+# par( mfrow=c( 1,1 ) )
+
+```
+
+```{r deadCode1, echo=FALSE,eval=FALSE}
+library(threejs)
+
+as.data.frame(lapply(fit,function(x){
+  retVal <- x$resPeak$padj
+  retVal[is.na(retVal)] <- 1
+  return(retVal)
+})) -> peakPadj
+
+size <- -log10(pmin(peakPadj$HoVu,peakPadj$MeNu2,peakPadj$StLa))
+size <- ifelse(size>4,4,size)
+hist(size)
+
+scatterplot3js(x=peakRanks[,"HoVu"],y=peakRanks[,"MeNu2"],z=peakRanks[,"StLa"],
+               col=rgb(1-peakPadj$HoVu,1-peakPadj$MeNu2,1-peakPadj$StLa), 
+               size=size/2,
+               renderer="canvas")
+
+plot(hclust(as.dist(1-cor(peakRanks))))
+plot(hclust(as.dist(1-cor(rampRanks))))
+heatmap(cor(rampRanks),scale="none")
+heatmap(cor(peakRanks),scale="none")
+
+table(apply(lens>0 & lens<4,1,all))
+
+table(HoVu=fit$HoVu$resPeak$pvalue < 0.05, MeNu1=fit$MeNu1$resPeak$pvalue < 0.05)
+```
+
+```{r deadCode2, echo=FALSE,eval=FALSE}
+# compare variance between samples
+hist(fit$HoVu$resPeak$lfcSE)
+
+hist(fit$MeNu2$resPeak$lfcSE)
+cor(fit$MeNu2$resPeak$lfcSE,fit$MeNu1$resPeak$lfcSE,use = "pairwise.complete.obs")
+cor(fit$MeNu2$resPeak$lfcSE,fit$HoVu$resPeak$lfcSE,use = "pairwise.complete.obs")
+cor(fit$NaSt$resPeak$lfcSE,fit$HoVu$resPeak$lfcSE,use = "pairwise.complete.obs")
+plot(fit$MeNu1$resPeak$lfcSE,fit$MeNu2$resPeak$lfcSE, log="xy")
+
+sapply(fit,function(x){x$resPeak$lfcSE}) -> x
+heatmap(cor(log(x),use = "pairwise.complete.obs"),scale="none")
+
+s <- c("HoVu","MeNu1","StLa","NaSt1")
+s <- setNames(s,s)
+sapply(s,function(spc){
+  m <- do.call(cbind,grp11Cnt[grepl(paste0("^",spc,".+T4"),names(grp11Cnt))])
+  return(apply(m,1,var))
+}) -> varT4
+
+s <- c("T0","T1","T3","T4")
+s <- setNames(s,s)
+sapply(s,function(timePoint){
+  m <- do.call(cbind,grp11Cnt[grepl(paste0("^MeNu1.",timePoint),names(grp11Cnt))])
+  return(apply(m,1,var))
+}) -> varMeNu1
+
+dim(varMeNu1)
+heatmap(cor(log(varMeNu1)),scale="none")
+spc="HoVu"
+plot(varMeNu1[,"T1"],varMeNu1[,"T4"],log="xy")
+names(grp11Cnt)[grepl(paste0("^",spc,".+T4"),names(grp11Cnt))]
+```
+

@@ -1,0 +1,492 @@
+---
+title: "Validate using the core cold response genes from the Greenup study"
+output: html_document
+---
+
+### Goal of analysis
+
+Validate that our data can detect cold responsive genes by comparing with a set of genes that have been identified as responsive to cold in an earlier study, specifically the genes in table S10 "A core set of low-temperature responsive contigs in barley" from [Greenup et al. 2011](journals.plos.org/plosone/article?id=10.1371/journal.pone.0017900)
+
+
+```{r loadLibraries, echo=FALSE, message=FALSE}
+library(DESeq2)
+library(ape)
+library(phangorn)
+library(stringr)
+
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+
+```{r loadData, echo=FALSE, cache=TRUE}
+# define paths:
+orthoPath <- "/mnt/NOBACKUP/mariansc/share/orthos"
+
+#####
+# Input data (from the Greenup study)
+blastOutFile <- "~/GRewd/pipeline/indata/genesOfInterrest2/COR_genes_VS_allProteomes.blastx"
+annotTblFile <- "~/GRewd/pipeline/indata/genesOfInterrest2/TableS10.txt"
+
+# load annotation table
+annotTbl <- read.table(annotTblFile,sep="\t",header=T,stringsAsFactors = F,dec = ",")
+
+# load blast results
+bres <- read.table(blastOutFile, stringsAsFactors = F,
+                   col.names = c("qseqid", "sseqid", "pident", "length", 
+                                 "mismatch", "gapopen", "qstart", "qend",
+                                 "sstart", "send", "evalue", "bitscore"))
+
+
+
+# load groups
+grpsTbl <- loadOrthoGrpsTable(orthoGrpFile = file.path(orthoPath,"orthoMCL/groups.txt"))
+grps <- OrthoGrpTableToArray(grpsTbl)
+
+goodGrpsTbl <- loadOrthoGrpsTable(file.path(orthoPath,"splitGroups/goodGroups.txt"))
+goodGrps <- OrthoGrpTableToArray(goodGrpsTbl)
+
+# load DE
+load(file.path(orthoPath,"DESeq/DE.RData"))
+
+
+# load DE Matrix based on superGenes
+DEmat <- readRDS("~/GRewd/pipeline/data/DEmat.RDS") # from: superGeneModel.Rmd
+
+# grpIDs included the superGeneModel.Rmd:
+superGoodGrpIDs <- rownames(DEmat$peak$pVal)
+```
+
+
+### Mapping barley contigs to our sequences
+
+The sequences of the barley low temperature induced (LTI) genes where blasted against our sequences to identify the corresponding genes in our dataset. Not all matched any of the orthogroups, fewer still matched the filtered groups (goodGrps and superGoodGrps)
+
+
+```{r coldGenes, echo=F, results="asis"}
+
+# get the Group IDs for the blast hits
+bres$grpID <- grpsTbl$grpID[ match(bres$sseqid, grpsTbl$seqID)]
+bres$grpIDgood <- goodGrpsTbl$grpID[ match(bres$sseqid, goodGrpsTbl$seqID)]
+
+# make a table based on the annotTbl
+tbl <- data.frame( qseq = annotTbl$Contig,
+                   Chill_logFC = annotTbl$Dicktoo_Chill_logFC,
+                   stringsAsFactors = F)
+
+# for each blast query get the grp with best hit
+bresSub <- !is.na(bres$grpID) # ignore the blastresults to sequences not in groups
+idx <- match(tbl$qseq,bres$qseqid[bresSub]) # first match is best hit (because bres is sorted)
+tbl$bestHitWithGrp <- bres$sseqid[bresSub][idx]
+tbl$grpID <- bres$grpID[bresSub][idx]
+
+tbl$grpIDgood <- bres$grpIDgood[bresSub][idx]
+
+tbl$grpIDsuperGood <- ifelse(tbl$grpIDgood %in% superGoodGrpIDs, tbl$grpIDgood, NA)
+
+tbl$Annotation <- annotTbl$Annotation
+
+DT::datatable(tbl, class="compact stripe",options = list(pageLength=100),rownames = F)
+```
+
+
+
+```{r heatmapSuperCold, echo=FALSE}
+coldSuperGrps <- unique(tbl$grpIDsuperGood[!is.na(tbl$grpIDsuperGood)])
+
+
+logFCcols <- as.character( cut(tbl$Chill_logFC[match(coldSuperGrps,tbl$grpIDsuperGood)],
+                               breaks=c(-20,seq(-5.5,5.5,by=1),20),
+                               labels=colorRampPalette(c("blue","white","red"))(13) ) )
+
+
+heatmap(DEmat$peak$stat[coldSuperGrps,], breaks=c(-20,seq(-5.5,5.5,by=1),20),
+        col=colorRampPalette(c("green","black","red"))(13),
+        RowSideColors=logFCcols,
+        scale="none", Rowv = NA, Colv = NA, main="Peak stat of Barley LTI genes")
+
+heatmap(DEmat$peak$lfc[coldSuperGrps,], breaks=c(-20,seq(-5.5,5.5,by=1),20),
+        col=colorRampPalette(c("blue","white","red"))(13),
+        RowSideColors=logFCcols,
+        scale="none", Rowv = NA, Colv = NA, main="Peak lfc of Barley LTI genes")
+
+# heatmap(DEmat$ramp$stat[coldSuperGrps,], breaks=c(-20,seq(-5.5,5.5,by=1),20),
+#         col=colorRampPalette(c("green","black","red"))(13),
+#         scale="none", Rowv = NA, Colv = NA, main="Ramp stat of Barley LTI genes")
+
+```
+
+```{r signficantTest, echo=FALSE}
+apply(DEmat$peak$lfc[coldSuperGrps, ],2,cor.test,tbl$Chill_logFC[match(coldSuperGrps,tbl$grpIDsuperGood)])
+
+
+
+# using the GSEA method
+
+calcES <- function(W,isInSet){
+  N <- length(isInSet)
+  Nh <- sum(isInSet)
+
+  ES <- cumsum(ifelse(isInSet, 
+                      abs(W)/sum(abs(W[isInSet])), # add if hit
+                      -1/(N-Nh)) # subtract if miss
+               [order(W,decreasing = T)] # order by decreasing weight
+               )
+  return(ES)
+}
+
+spcs <- colnames(DEmat$peak$pVal)
+
+
+sapply(spcs, function(spc){
+  W <- abs(DEmat$peak$stat[ ,spc])
+  isInSet <- superGoodGrpIDs %in% coldSuperGrps
+  plot(calcES(W,isInSet),type="l")
+  
+  ES <- max(calcES(W,isInSet))
+  ES0 <- replicate(1000,max(calcES(W,sample(isInSet))))
+  
+  cat("p-value:", mean(ES<ES0))
+}) -> ES.pVal
+
+```
+
+```{r calcGrpDropSignificance, echo=FALSE, eval=FALSE}
+# what is the chance that so few of the LTI genes are in good grps?
+seqIDs.HV_R <- unlist(grps[ ,"Hv_R"])
+seqIDs.good.HV_R <- unlist(goodGrps[ ,"Hv_R"])
+phyper(q=sum(!is.na(tbl$grpIDgood)), # number of LTI genes in good grps
+       m=sum(seqIDs.HV_R %in% seqIDs.good.HV_R), # number of barley genes in good grps
+       n=sum(!(seqIDs.HV_R %in% seqIDs.good.HV_R)), # number of barley genes in bad grps
+       k=sum(!is.na(tbl$grpID))) # number of LTI genes (in grps)
+
+
+# find reason why grps are not a good grp
+
+
+lens <- sapply(grps,length)
+dim(lens) <- dim(grps)
+dimnames(lens) <- dimnames(grps)
+
+# all LTI grpIDs:
+grpIDs <- unique(tbl$grpID[!is.na(tbl$grpID)])
+
+
+# at least 5 seqs (required for )
+has5seqs <- rowSums(lens[grpIDs, ])>5
+
+outSpcs <- c("Os_R", "Sb_R", "Zm_R")
+# has at least one out-species
+hasOutSpc <- apply(lens[grpIDs, outSpcs]>0,1,any)
+
+table(hasOutSpc,has5seqs, hasGoodGrp = !is.na(tbl$grpIDgood[match(grpIDs,tbl$grpID)]))
+```
+
+
+
+```{r plotEffectRanks, echo=FALSE, fig.height=7,fig.width=7, eval=FALSE}
+idx <- match(gsub("_i.+$","",gsub("\\|","_",unique(Coldbres))),rownames(countData))
+
+#sum(is.na(idx))/length(idx)
+idx <- idx[!is.na(idx)]
+
+len <- nrow(countData)
+
+idxRnd <- sample(x = 1:len,1000)
+
+plot(rank(results(ddsPeak)$stat)[idxRnd]/len,rank(results(ddsTime)$stat)[idxRnd]/len,
+     pch=20, col ="lightgrey", cex=0.5,
+     xlim=c(0,1),ylim=c(0,1), xlab="Short term effect rank", ylab="Long term effect rank")
+
+colLimit <- function(p1,p2,lt=0.05){
+  ifelse(is.na(p1),"green",ifelse(is.na(p2),"green",ifelse(pmin(p1,p2)<lt,"red","black")))
+}
+points(rank(results(ddsPeak)$stat)[idx]/len,rank(results(ddsTime)$stat)[idx]/len, pch=20,
+       col=colLimit(results(ddsPeak)$padj[idx],results(ddsTime)$padj[idx]))
+abline(v=min(rank(results(ddsPeak)$stat)[results(ddsPeak)$padj<0.05],na.rm = T)/len)
+abline(h=min(rank(results(ddsTime)$stat)[results(ddsTime)$padj<0.05],na.rm = T)/len)
+```
+
+
+
+```{r plotAll, echo=FALSE, fig.height=7,fig.width=7}
+
+for( spc in c("BrDi","HoVu","MeNu1","StLa","NaSt")){
+  
+  # get blast hits for this spc with grpID
+  spcBres <- bres[ grepl(spc,bres$sseqid) & !is.na(bres$grpID), ]
+  # Keep only best hits per query
+  spcBres <- spcBres[match(unique(spcBres$qseqid),spcBres$qseqid), ]
+  # strip the spc from the sequence ID
+  spcBres$seqID <- sapply(strsplit(spcBres$sseqid,"\\|"),"[",2)
+  
+  statPeak <- DE[[spc]]$resPeak$stat
+  statRamp <- DE[[spc]]$resRamp$stat
+
+  # remove NAs
+  isNA <- is.na(statRamp) | is.na(statPeak)
+  statPeak <- statPeak[!isNA]
+  statRamp <- statRamp[!isNA]
+
+
+  # get log fold change
+  spcBres$lfc <- tbl$Chill_logFC[match(spcBres$qseqid,tbl$qseq)]
+  #spcBres$lfcGrp <- tbl$Chill_logFC[match(spcBres$grpID,tbl$grpID)] 
+  
+  len <- sum(!isNA)
+  rankPeak <- rank(statPeak)/len
+  rankRamp <- rank(statRamp)/len
+  
+  # get index of LTI orthologs
+  spcBres$idx <- match(spcBres$seqID,rownames(DE[[spc]]$resPeak)[!isNA])
+
+  spcBres$rankPeak <- rankPeak[spcBres$idx]
+  spcBres$rankRamp <- rankRamp[spcBres$idx]
+  
+  idxRnd <- sample(x = 1:len,1000)
+  
+  plot(rankPeak[idxRnd],rankRamp[idxRnd],
+       pch=20, col = "lightgrey", cex=0.5,
+       xlim=c(0,1),ylim=c(0,1), xlab="Peak effect rank", ylab="Ramp effect rank")
+  
+  # get index of LTI orthologs
+  points(spcBres$rankPeak,spcBres$rankRamp, pch=20, col=ifelse(spcBres$lfc>0,"red","blue"))
+
+  title(main = spc)
+}
+```
+
+
+```{r crap, echo=FALSE, eval=FALSE}
+VSTnew<-readRDS("~/GRewd/pipeline/data/VSTnew.RDS")
+
+isSig <- (DEmat$peak$pAdj[,"BrDi"] < 0.05 & abs(DEmat$peak$lfc[,"BrDi"]) > 1) |
+         (DEmat$ramp$pAdj[,"BrDi"] < 0.05 & abs(DEmat$ramp$lfc[,"BrDi"]) > 1)
+
+x <- VSTnew[isSig,grep("BrDi",colnames(VSTnew))]
+x <- x[!apply(x,1,function(r) {any(is.na(r))}), ] # remove NA's
+
+x <- t(scale(t(x),center = T,scale = T))
+x <- x[!apply(x,1,function(r) {any(is.na(r))}), ] # remove NA's
+table(is.na(x))
+cl <- kmeans(x,16)
+
+table(cl$cluster)
+
+
+i=1
+i=i+1
+# heatmap(x[cl$cluster==i, ],scale="none",Colv = NA, Rowv=NA)
+plot(colMeans(x[cl$cluster==i, ]),type="b",ylim=c(-2,2))
+for(idx in which(cl$cluster==i)){
+  lines(x[idx, ],col="grey")
+}
+lines(colMeans(x[cl$cluster==i, ]),type="b")
+
+clGrps <- rownames(x)[cl$cluster==i]
+heatmap(DEmat$peak$stat[clGrps,], breaks=c(-20,seq(-5.5,5.5,by=1),20),
+        col=colorRampPalette(c("green","black","red"))(13),
+        scale="none", Rowv = NA, Colv = NA, main="Peak stat of Barley LTI genes")
+
+sapply(tapply(rownames(x),cl$cluster, c),function(clGrps){
+  colMeans(DEmat$peak$lfc[clGrps, ]>0,na.rm = T)
+}) -> clPeakMat
+heatmap(t(clPeakMat),scale="none")
+
+```
+
+```{r morecrap, echo=FALSE, eval=FALSE}
+lapply(DE,with,{
+  sampleIDs <- colnames(vst)
+  TimePoint <- sub(".*(T-?[0-4]).*","\\1",sampleIDs,perl=T)
+  sapply(tapply(sampleIDs,TimePoint,c), function(cols){
+    rowMeans(vst[ ,cols,drop=F])
+  }) 
+}) -> meanVstPerTimePoint
+
+rownames(meanVstPerTimePoint$StLa)[1:5]
+
+sampleIDs <- colnames(DE$BrDi$vst)
+```
+
+
+```{r EvenMoreCrap, echo=FALSE, eval=FALSE}
+deNovoSpc <- c("BrDi","HoVu","MeNu1","StLa","NaSt")
+refInSpc <- c("Bd_R","Hv_R","LoPe")
+table(noOut= rowSums(lens[,outSpcs])==0, 
+      nInRef = rowSums(lens[,c("Bd_R","Hv_R")]>0))
+table(apply(lens[rowSums(lens[,outSpcs])==0 & rowSums(lens[,deNovoSpc]>0) == 2, deNovoSpc],1,
+      function(i){paste(deNovoSpc[i>0],collapse="&")}))
+
+table(noOut= rowSums(lens[,outSpcs])==0, 
+      nDenovo=rowSums(lens[,c("BrDi","HoVu","MeNu1","StLa","NaSt")]>0))
+```
+
+
+```{r CrapAgain, echo=FALSE, eval=FALSE}
+whichSigPeakIn3 <- which(rowSums(sigMat$peak[,c("MeNu1","NaSt")]) == 2)
+
+heatmap(DEmat$peak$stat[whichSigPeakIn3,], breaks=c(-20,seq(-5.5,5.5,by=1),30),
+        col=colorRampPalette(c("green","black","red"))(13),
+        scale="none", main="Peak up in at least 3 species")
+
+```
+
+```{r theCrapKeepsOnComing, echo=FALSE, eval=FALSE}
+pca <- prcomp(t(VSTnew))
+plot(pca)
+spcColors <- c(BrDi="#00A0B0", HoVu="#6A4A3C", MeNu="#CC333F",
+               NaSt="#EDC951", StLa="#2ECC71")
+TimePoint <- sub(".*(T-?[0-4]).*","\\1",colnames(VSTnew),perl=T)
+plot(pca$x[,"PC4"],pca$x[,"PC5"],
+     col=spcColors[substr(colnames(VSTnew),1,4)],
+     pch=c(`T-1`="-",T0="0",T1="1",T3="3",T4="4")[TimePoint])
+```
+
+
+```{r plotRanksNextToEachOther, echo=FALSE, message=FALSE, cache=TRUE, fig.height=5,fig.width=7, eval=FALSE}
+lapply( spcs, function(spc){
+  idx <- match(unlist(grps[ unique(Cold.grp), spc ]),rownames(fit[[spc]]$countData))
+  idx <- idx[!is.na(idx)]
+  
+  idxTop <- match(unique(subset(bresTop, sspc==spc)$sseqid),rownames(fit[[spc]]$countData))
+  idxTop <- idxTop[!is.na(idxTop)]
+  
+  len <- nrow(fit[[spc]]$countData)
+
+  return( list( peakRank = rank(fit[[spc]]$resPeak$stat)[idx]/len,
+                timeRank = rank(fit[[spc]]$resTime$stat)[idx]/len,
+                peakRankTop = rank(fit[[spc]]$resPeak$stat)[idxTop]/len,
+                timeRankTop = rank(fit[[spc]]$resTime$stat)[idxTop]/len ))
+}) -> allRanks
+
+plot( x=NULL, xlim=c(0.5,0.5+length(spcs)),ylim=c(0,1), 
+      ylab="significance rank", xaxt="n", xlab="",
+      main="peak effect",sub="all orthologs (blue) and best hit only(pink)")
+axis(1,at=1:length(spcs),label=spcs)
+for(i in 1:length(spcs)){
+  y=allRanks[[i]]$peakRank
+#   points(x=rep(i,length(y)),y=y)
+  boxplot(y,add=T, at=i-0.15,boxwex = 0.4, axes = FALSE, col="lightblue")
+  y=allRanks[[i]]$peakRankTop
+#   points(x=rep(i,length(y)),y=y,col="red")
+  boxplot(y,add=T, at=i+0.15,boxwex = 0.4, axes = FALSE,col="pink")
+}
+
+plot( x=NULL, xlim=c(0.5,0.5+length(spcs)),ylim=c(0,1), 
+      ylab="significance rank", xaxt="n", xlab="",
+      main="ramp effect",sub="all orthologs (blue) and best hit only(pink)")
+axis(1,at=1:length(spcs),label=spcs)
+# plot( x=NULL, xlim=c(1,length(spcs)),ylim=c(0,1), ylab="significance rank", xaxt="n", xlab="",
+#       main="ramp effect (best matching orthologs)")
+# axis(1,at=1:length(spcs),label=spcs)
+for(i in 1:length(spcs)){
+  y=allRanks[[i]]$timeRank
+  boxplot(y,add=T, at=i-0.15,boxwex = 0.4, axes = FALSE, col="lightblue")
+  y=allRanks[[i]]$timeRankTop
+  boxplot(y,add=T, at=i+0.15,boxwex = 0.4, axes = FALSE,col="pink")
+#   y=allRanks[[i]]$timeRankTop
+#   boxplot(y,add=T, at=i, axes = FALSE)
+}
+```
+
+
+```{r plotSignedRanksNextToEachOther, echo=FALSE, message=FALSE, cache=TRUE, fig.height=5,fig.width=7, eval=FALSE}
+lapply( spcs, function(spc){
+  idx <- match(unlist(grps[ unique(Cold.grp), spc ]),rownames(fit[[spc]]$countData))
+  idx <- idx[!is.na(idx)]
+  
+  idxTop <- match(subset(bresTop, sspc==spc)$sseqid,rownames(fit[[spc]]$countData))
+  grpTop <- subset(bresTop, sspc==spc)$grp
+  idxTop <- idxTop[!is.na(idxTop)]
+  grpTop <- grpTop[!is.na(idxTop)]
+  
+  len <- nrow(fit[[spc]]$countData)
+
+  return( list( peakRank = rank(fit[[spc]]$resPeak$stat)[idx]/len *
+                  sign(fit[[spc]]$betas[idx,"t_sTRUE"]),
+                timeRank = rank(fit[[spc]]$resTime$stat)[idx]/len *
+                  sign(fit[[spc]]$betas[idx,"t_l"]),
+                peakRankTop = rank(fit[[spc]]$resPeak$stat)[idxTop]/len *
+                  sign(fit[[spc]]$betas[idxTop,"t_sTRUE"]),
+                timeRankTop = rank(fit[[spc]]$resTime$stat)[idxTop]/len *
+                  sign(fit[[spc]]$betas[idxTop,"t_l"]),
+                grpTop = grpTop ))  
+  
+}) -> allSignedRanks
+
+plot( x=NULL, xlim=c(0.5,0.5+length(spcs)),ylim=c(-1,1), 
+      ylab="significance rank", xaxt="n", xlab="",
+      main="peak effect (with direction)")
+axis(1,at=1:length(spcs),label=spcs)
+for(i in 1:length(spcs)){
+  
+  y=allSignedRanks[[i]]$peakRank
+  boxplot(y[y>0],add=T, at=i-0.15,boxwex = 0.4, axes = FALSE, col="lightblue")
+  boxplot(y[y<0],add=T, at=i-0.15,boxwex = 0.4, axes = FALSE, col="lightblue")
+
+  y=allSignedRanks[[i]]$peakRankTop
+  boxplot(y[y>0],add=T, at=i+0.15,boxwex = 0.4, axes = FALSE,col="pink")  
+  boxplot(y[y<0],add=T, at=i+0.15,boxwex = 0.4, axes = FALSE,col="pink")  
+}
+
+
+plot( x=NULL, xlim=c(0.5,0.5+length(spcs)),ylim=c(-1,1), 
+      ylab="significance rank", xaxt="n", xlab="",
+      main="ramp effect (with direction)")
+axis(1,at=1:length(spcs),label=spcs)
+for(i in 1:length(spcs)){
+  
+  y=allSignedRanks[[i]]$timeRank
+#   points(x=rep(i,length(y)),y=y,pch=20,cex=0.5,col="blue")
+  boxplot(y[y>0],add=T, at=i-0.15,boxwex = 0.4, axes = FALSE, col="lightblue")
+  boxplot(y[y<0],add=T, at=i-0.15,boxwex = 0.4, axes = FALSE, col="lightblue")
+
+  y=allSignedRanks[[i]]$timeRankTop
+#   points(x=rep(i,length(y)),y=y,col="red",cex=0.7)
+  boxplot(y[y>0],add=T, at=i+0.15,boxwex = 0.4, axes = FALSE,col="pink")  
+  boxplot(y[y<0],add=T, at=i+0.15,boxwex = 0.4, axes = FALSE,col="pink")  
+
+
+}
+
+```
+
+```{r joinTheDots, echo=FALSE, message=FALSE, cache=TRUE, fig.height=5,fig.width=7, eval=FALSE}
+
+plot( x=NULL, xlim=c(0.5,0.5+length(spcs)),ylim=c(-1,1), 
+      ylab="significance rank", xaxt="n", xlab="",
+      main="Joined dots (peak effect with direction)")
+axis(1,at=1:length(spcs),label=spcs)
+for(i in 1:length(spcs)){
+  y=allSignedRanks[[i]]$peakRankTop
+  points(x=rep(i,length(y)),y=y,col="red",cex=0.7)
+}
+
+for( grp in allSignedRanks$HoVu$grpTop){
+  sapply(1:length(spcs), function(i){
+    y <- allSignedRanks[[i]]$peakRankTop[match(grp,allSignedRanks[[i]]$grpTop)]
+    return( list( x=i, y=y))
+  }) -> xy
+  lines(xy["x",],xy["y", ])
+}
+
+
+plot( x=NULL, xlim=c(0.5,0.5+length(spcs)),ylim=c(-1,1), 
+      ylab="significance rank", xaxt="n", xlab="",
+      main="Joined dots (ramp effect with direction)")
+axis(1,at=1:length(spcs),label=spcs)
+for(i in 1:length(spcs)){
+  y=allSignedRanks[[i]]$timeRankTop
+  points(x=rep(i,length(y)),y=y,col="red",cex=0.7)
+}
+
+for( grp in allSignedRanks$HoVu$grpTop){
+  sapply(1:length(spcs), function(i){
+    y <- allSignedRanks[[i]]$timeRankTop[match(grp,allSignedRanks[[i]]$grpTop)]
+    return( list( x=i, y=y))
+  }) -> xy
+  lines(xy["x",],xy["y", ])
+}
+
+```
+

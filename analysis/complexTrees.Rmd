@@ -1,0 +1,274 @@
+---
+title: "complexTrees - Validating trees that are not 1:1"
+output: html_document
+---
+
+```{r loadLibraries,echo=FALSE}
+library(ape)
+library(phangorn)
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+
+```{r loadData, echo=FALSE, cache=TRUE}
+
+myTree <- read.tree(text = "(((((Bd_R:1,BrDi:1):1,(Hv_R:1,HoVu:1):1):1,(MeNu1:1,MeNu2:1):2):1,StLa:4):1,NaSt:5):0;")
+
+treePath <- "/mnt/NOBACKUP/mariansc/share/orthos/treesNuc"
+treeFiles <- dir(treePath,pattern="\\.tree$")
+
+lapply(setNames(file.path(treePath,treeFiles),
+                stringr::str_extract(treeFiles,"grp[0-9]+")), read.tree
+       ) -> allTrees
+
+grps <- loadOrthoGrpsArray(orthoGrpFile = "/mnt/NOBACKUP/mariansc/share/orthos/orthoMCL/groups.txt")
+
+# get number of genes per species per group
+lens <- unlist(lapply(grps,length))
+dim(lens) <- dim(grps)
+dimnames(lens) <- dimnames(grps)
+```
+
+
+```{r get11Trees, echo=FALSE, dev='svg'}
+is11 <- apply(lens==1,1,all)
+grpIDs11 <- rownames(grps)[is11]
+
+all11Trees <- allTrees[names(allTrees) %in% grpIDs11]
+complexTrees <- allTrees[!(names(allTrees) %in% grpIDs11)]
+
+plot(complexTrees[[1000]])
+# The MeNu orthologs are perhaps not true orthologs
+# HoVu and NaSt group together... Not valid topology
+# Maybe this group could be saved with outgroup species
+
+plot(complexTrees[[1001]],show.node.label=T)
+# This tree has no core genes?!? but many basal
+# What to do about it???!?!
+names(complexTrees[1001])
+
+lapply(all11PepTrees,function(tree){
+  tree$tip.label <- stringr::str_extract(tree$tip.label,"^[^\\.]*")
+  return(tree)
+}) ->all11PepTrees.relabeled
+
+lapply(all11Trees,function(tree){
+  tree$tip.label <- stringr::str_extract(tree$tip.label,"^[^\\|]*")
+  return(tree)
+}) ->all11Trees.relabeled
+
+plotBS(tree = myTree,BStrees = all11Trees.relabeled,type = "phylogram")
+
+# myTree$node.label <- prop.clades(myTree,all11Trees.relabeled)
+# plot(myTree, show.node.label=T)
+
+```
+
+```{r defFunctions, echo=FALSE}
+calcNodeCodes <- function(tree){
+  nodeCode <- c(2^(seq_along(tree$tip.label)-1),rep(0,tree$Nnode))
+  nodeDone <- nodeCode>0
+  
+  getDescSum <- function(node){
+    if(nodeDone[node]){
+      return(nodeCode[node])
+    } else {
+      nodeCode[node] <<- sum(sapply(tree$edge[which(tree$edge[,1]==node),2],getDescSum))
+      nodeDone[node] <<- TRUE
+      return(nodeCode[node])
+    }
+  }
+  while(!all(nodeDone)){
+    getDescSum(match(F,nodeDone))
+  }
+  return(nodeCode)
+}
+
+# Reorder the nodes and edges of tree to yield an identical tree with same internal order
+# as "orderedTree".
+# Assumes that the tip order is already identical
+reorderTreeIntern <- function(tree, orderedTree){
+  nCode <- calcNodeCodes(tree)
+  nCodeOrd <- calcNodeCodes(orderedTree)
+  nodeOrder <- match(nCode,nCodeOrd)
+  tree$edge <- apply(tree$edge,2,function(x){nodeOrder[x]})
+  if( !is.null(tree$node.label)){
+    nTips <- length(tree$tip.label)
+    i <- (nTips+1):(nTips+tree$Nnode)
+    tree$node.label <- tree$node.label[ match(nCodeOrd[i],nCode[i]) ]
+  }
+  
+  # reorder edges
+  edgeOrder <- match(apply(orderedTree$edge,1,paste,collapse=","),
+                     apply(tree$edge,1,paste,collapse=","))
+  tree$edge <- tree$edge[edgeOrder,]
+  if(!is.null(tree$edge.length)){
+    tree$edge.length <- tree$edge.length[edgeOrder]
+  }
+  return(tree)
+}
+```
+
+```{r getPhyloCount, echo=FALSE}
+# convert phylogenies to strings
+
+obj <- .compressTipLabel(all11Trees.relabeled)
+sapply(obj, function(tree){
+  i <- apply(getClans(tree),1,function(x){sum(x*2^(0:7))})
+  x <- integer(254)
+  x[i] <- as.integer(names(i))
+  return(x)
+}) -> allClans
+
+rownames(allClans) <- 1:254
+
+emptyRows <- apply(allClans<1,1,all)
+nonEmptyClans <- allClans[!emptyRows,]
+
+apply(nonEmptyClans,2,function(clan){
+  paste(names(which(clan != 0)),collapse=",")
+}) -> clanString
+
+# get sorted counts of each type of phylogeny
+phyCount <- sort(table(clanString),decreasing = T)
+```
+
+### The 20 most abundant phylogenies
+Total number of trees is 2149 (the number of 1:1:1 ortho groups).
+The 20 most abundant phylogenies accounts for 96% of these trees.
+Bootstrapping values and edge lengths are averaged accross all trees with same phylogeny.
+
+```{r plotAbundantPhylos, echo=FALSE, dev='svg'}
+pie(phyCount,labels = c(phyCount[1:10],rep("",length(phyCount)-10)),
+    main="Number of occurenses of each phylogeny")
+for( i in 1:20 ){
+  # get all trees with the most abundant phylogeny
+  trees <- obj[clanString==names(phyCount)[i]]
+  # re-root trees to StLa
+  rTrees <- lapply(trees,root,"StLa")
+  class(rTrees) <- class(trees)
+  
+  # make consensus tree
+  cTree <- consensus(rTrees)
+  
+  
+  # reorder trees internally so node.labels and edge.lengths can be compared
+  oTrees <- lapply(rTrees,reorderTreeIntern,cTree)
+  class(oTrees) <- class(trees)
+  
+  # get bootstrap values for all nodes
+  bs <- sapply(oTrees,function(tree){as.integer(tree$node.label)})
+  bsMeans <- rowMeans(bs)
+  cTree$node.label <- round(bsMeans)
+  
+  # get edge lengths for all trees
+  el <- sapply(oTrees,function(tree){tree$edge.length})
+  elMeans <- rowMeans(el)
+  cTree$edge.length <- elMeans
+  
+  plot(cTree,show.node.label=F,main=paste("Occurences: ",phyCount[i]))
+  nodelabels(cTree$node.label, adj = c(1, 1.2),frame = "none")
+
+}
+
+
+```
+
+### The 20 most abundant splits
+
+In paranthesis is the number of occurences in the trees based on amino acid sequences.
+
+```{r plotAbundantSplit, echo=FALSE, dev='svg'}
+
+sapply(obj,function(tree){
+  bs <- bitsplits(tree)
+  sapply(bs$matsplit,as.integer)
+}) -> allSplits
+
+splitCounts <- sort(table(allSplits),decreasing=T)
+
+### splitCount for peptide alignments
+# get same tip label order
+objPep <- .compressTipLabel(c(all11Trees.relabeled[1],all11PepTrees.relabeled))[-1]
+# get same order of tree (not needed here)
+objPep <- objPep[match(names(obj),names(objPep))]
+
+sapply(objPep,function(tree){
+  bs <- bitsplits(tree)
+  sapply(bs$matsplit,as.integer)
+}) -> allPepSplits
+
+x <- table(allPepSplits)
+splitPepCounts <- x[match(names(splitCounts),names(x))]
+###
+
+pie(splitCounts,labels = ifelse(splitCounts>50,splitCounts,""),
+    main="Number of occurenses of each split")
+
+# convert partiotion in integer form to tree form and plot
+label <- attr(obj,"TipLabel")
+plotSplit <- function(splitCode, label, ...){
+  idx <- as.logical(intToBits(splitCode)[8:1])
+  text1 <- paste0(label[idx],":1",collapse=",")
+  text2 <- paste0(label[!idx],":1",collapse=",")
+  text =sprintf("((%s):2,(%s):2);",text1,text2)
+  tree <- read.tree(text=text)
+  plot.phylo(tree,type="u", ...)
+}
+
+for(i in 1:20){
+  plotSplit(as.integer(names(splitCounts[i])),label, 
+            main=sprintf("Occurences: %i (%i)",splitCounts[i],splitPepCounts[i]))
+}
+
+
+```
+
+
+```{r deadCode,echo=FALSE,eval=FALSE}
+
+sapply(obj,function(tree){
+  bs <- bitsplits(tree)
+  paste(sort(sapply(bs$matsplit,function(x){sprintf("%02X",as.integer(x))})),collapse=",")
+}) -> allPhyloTypes
+phyloCount <- sort(table(allPhyloTypes),decreasing=T)
+pie(phyloCount)
+
+
+
+getFigAngle <- function(a,s,d=s){
+  x=(0.5+cos(a)*0.5*(1-d/2))+(c(-1,1)*s/4)
+  y=(0.5+sin(a)*0.5*(1-d/2))+(c(-1,1)*s/4)
+  return(c(x,y))
+}
+
+a=(2*pi*(cumsum(splitCounts)-(splitCounts/2)))/sum(splitCounts)
+s=splitCounts/sum(splitCounts)
+s = s/max(s)
+
+par(old.par)
+
+pie(splitCounts,labels = ifelse(splitCounts>50,splitCounts,""),radius = 0.4)
+
+for(i in 1:10){
+  par(new=TRUE, fig=getFigAngle(a[i],sqrt(s[i])*2/3), mar=c(0,0,0,0))
+  plotSplit(as.integer(names(splitCounts[i])),label)
+}
+
+par(old.par)
+
+
+idx <- match(names(phyloCount)[1],allPhyloTypes)
+plot(obj[[idx]])
+
+
+allSplits[,1:5]
+allPhyloTypes[1:5]
+plot.phylo(obj$grp109388)
+
+plotSplit(207,label)
+apply(allSplits[,1:5],2,function(i) {sprintf("%02X",i)})
+label[as.logical(intToBits(4)[8:1])]
+label
+```
+
