@@ -1,4 +1,5 @@
 library(ape)
+library(phangorn) # getClans()
 
 RLinuxModules::moduleInit()
 RLinuxModules::module("load paml/4.7a")
@@ -8,6 +9,12 @@ RLinuxModules::module("load paml/4.7a")
 #
 # Helper functions:
 #
+isClan <- function(tree, isInGrp){
+  clans = getClans(tree)
+  any(apply(clans,1,function(clan){
+    all(clan==isInGrp)
+  }))
+}
 
 readFasta2phylip <- function (alnFile, seqIDs.splitClan) {
   # read fasta file
@@ -134,7 +141,6 @@ runCodeML <- function( markedTree, outFile, ... ){
 
 
 
-
 # for each a valid tree:
 # Run codeml based on the different hypothesis
 # Store results under a folder for each hypothesis
@@ -153,35 +159,76 @@ doPAML <- function(tree, grpID, codonAlnPath, outGrpDir){
 
   writeLines(alnPhylip, "aln.phylip") # temp file
   
-    
+  
+  # patterns for recognizing the species sets
+  outGrpPattern <- "^Os|^Sb|^Zm"
+  
+  spcPatterns <- c(
+    NaSt="^NaSt",
+    StLa="^StLa",
+    MeNu="^MeNu",
+    BrDi="^B",
+    HoVu="^H",
+    LoPe="^LoPe"
+  )
+  
+  spc2pattern <- function(spcs){
+    paste(spcPatterns[spcs],collapse="|")
+  }
+  
+  hSpcs <- list(
+    H4c = c("LoPe","HoVu"),
+    H4b = c("LoPe","HoVu","BrDi"),
+    H4e = c("LoPe","HoVu","BrDi","MeNu"),
+    H4d = c("LoPe","HoVu","BrDi","MeNu","StLa"),
+    H4a = c("LoPe","HoVu","BrDi","MeNu","StLa","NaSt")
+  )
+
+  # first branching species after split exists
+  hasFirstBranchingSpc <- function(tree,h){
+    firstBranching <- rev(hSpcs[[h]])[1]
+    otherSubSpcs <- rev(hSpcs[[h]])[-1]
+    return( sum(grepl(spc2pattern(firstBranching),tree$tip.label)) > 0 &
+            sum(grepl(spc2pattern(otherSubSpcs),tree$tip.label)) > 0  )
+  }
+
+  hasFirstBranchingSplit <- function(tree,h){
+    otherSubSpcs <- rev(hSpcs[[h]])[-1]
+    return( isClan(tree,grepl(spc2pattern(hSpcs[[h]]),tree$tip.label)) &
+              isClan(tree,grepl(spc2pattern(otherSubSpcs),tree$tip.label))  )
+  }
+  
+  # reroot the tree with the outGroup
+  tree <- root( phy = tree, outgroup = grep(outGrpPattern,tree$tip.label) )
   
   # remove internal node labels from trees
   tree$node.label <- rep("",tree$Nnode)
-  
   # remove edge lengths
   tree$edge.length <- NULL
   
-  
-  # patterns for recognizing the species sets
-  outGrpPattern <- "^Os|^Sb|^Zm"  
-  subGrpPatterns <- c(
-    H4a = "^H|^LoPe|^B|^MeNu|^StLa|^NaSt",
-    H4b = "^H|^LoPe|^B",
-    H4c = "^H|^LoPe",
-    H5a = "^NaSt",
-    H5b = "^MeNu" )
-  
-  # reroot the tree with the outGroup
-  tree <- root( tree, outgroup = grep(outGrpPattern,tree$tip.label) )
-  
-  
   # for each hypothesis:
-  
-  for( h in names(subGrpPatterns)){
-    # Only run if subGrpPattern exists in tree
-    if( length(grep(subGrpPatterns[h],tree$tip.label)) > 0){
+  for( h in names(hSpcs)){
+    # Only run if subGrpPattern exists in tree and
+    # if current split and next split is good
+    if( hasFirstBranchingSpc(tree,h) & hasFirstBranchingSplit(tree,h) ){
       # mark the tree
-      markedTree <- markTree(tree, subGrpPatterns[h])
+      markedTree <- markTree(tree, spc2pattern(hSpcs[[h]]))
+      
+      # Check if H4a mark ends up on the root (occurs if there is only one out-species)
+      if( h=="H4a" & grepl("#1;$",write.tree( markedTree )) ){
+        cat("resolve root for",grpID,"\n")
+        
+        # resolve the root        
+        rootTree <- root( phy = tree, outgroup = grep(outGrpPattern,tree$tip.label),
+                          resolve.root = T )
+        # remove labels
+        rootTree$node.label <- rep("",tree$Nnode)
+
+        # mark the tree again
+        markedTree <- markTree(rootTree, spc2pattern(hSpcs[[h]]))
+      }
+      
+      #plot.phylo(markedTree,show.node.label = T,main=h)
       
       runCodeML( markedTree=markedTree,
                  outFile=file.path( outGrpDir, paste(grpID,h,"H0.out",sep = "_") ),
@@ -192,7 +239,6 @@ doPAML <- function(tree, grpID, codonAlnPath, outGrpDir){
                  fix_omega = 0 )
     }
   }
-
 }
 
 # main loop:
@@ -212,11 +258,26 @@ mainLoopPAML <- function(x, goodTreesFile, goodTreeStatFile, codonAlnPath, array
   
   outDir <- getwd() # output to job's working directory
   
+  
   # divide the trees among the jobs in the job array
   for(i in seq(from = x, to = length(goodTopoTrees), by = arraySize)){
     
     tree <- goodTopoTrees[[i]]
     grpID <- names(goodTopoTrees)[i]
+  
+    # check if Rice is in outGroup
+    if( length(grep("^Os",tree$tip.label)) == 0 ){
+      cat(grpID,"no rice!?! next!\n")
+      next # no rice!?! next!
+    }
+    
+    # check out-group topology
+    if( sum(grepl("^Sb|^Zm",tree$tip.label))!=0 & !isClan(tree,!grepl("^Sb|^Zm",tree$tip.label)) ){
+      cat(grpID,"Rice don't form a clade with pooids! next!\n")
+      next # Rice don't form a clade with pooids! next!
+    }
+
+    cat(grpID,"\n")
     
     # create a temp folder
     tmpDir <- tempfile(pattern="codeml")

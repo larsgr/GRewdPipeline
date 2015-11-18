@@ -1,0 +1,172 @@
+---
+title: "TreeAnalysis VI"
+output: html_document
+---
+
+# Goal of analysis
+
+Summarize the tree topologies. How many trees have same topology as species tree? Decide rule for how to mark the trees when running codeml.
+
+```{r loadLibraries, echo=FALSE, message=FALSE}
+library(ape)
+library(phangorn)
+
+
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+```{r loadData, echo=FALSE, cache=TRUE}
+spcTree <- read.tree(text = "(((((((LoPe:1,HoVu:1)H4c:1,BrDi:2)H4b:1,MeNu:3)H4e:1,StLa:4)H4d:1,NaSt:5)H4a:1,Os_R:6):1,(Zm_R:2,Sb_R:2):5):0;")
+
+goodTrees <- readRDS("/mnt/NOBACKUP/mariansc/share/orthos/splitGroups/goodTrees.rds")
+goodTreeStats <- readRDS("/mnt/NOBACKUP/mariansc/share/orthos/splitGroups/goodTreeStats.rds")
+
+# patterns for recognizing the species sets
+outGrpPattern <- "^Os|^Sb|^Zm"
+
+spcPatterns <- c(
+  NaSt="^NaSt",
+  StLa="^StLa",
+  MeNu="^MeNu",
+  BrDi="^B",
+  HoVu="^H",
+  LoPe="^LoPe"
+)
+
+
+hSpcs <- list(
+  H4c = c("LoPe","HoVu"),
+  H4b = c("LoPe","HoVu","BrDi"),
+  H4e = c("LoPe","HoVu","BrDi","MeNu"),
+  H4d = c("LoPe","HoVu","BrDi","MeNu","StLa"),
+  H4a = c("LoPe","HoVu","BrDi","MeNu","StLa","NaSt")
+)
+
+goodGrps <- loadOrthoGrpsArray(orthoGrpFile = "/mnt/NOBACKUP/mariansc/share/orthos/splitGroups/goodGroups.txt")
+
+# get number of genes per species per group
+goodLens <- unlist(lapply(goodGrps,length))
+dim(goodLens) <- dim(goodGrps)
+dimnames(goodLens) <- dimnames(goodGrps)
+
+
+```
+
+```{r defFuns, echo=FALSE}
+# Check if tips (given by logical vector) form a clan in the tree
+isClan <- function(tree, isInGrp){
+  clans = getClans(tree)
+  any(apply(clans,1,function(clan){
+    all(clan==isInGrp)
+  }))
+}
+
+# get the tips under a specific node
+which.tips <- function(nodeLabel, tree){
+  nodeNr <- match(nodeLabel,tree$node.label)+length(tree$tip.label)
+  
+  tips <- integer(0)
+  repeat{
+    children <- tree$edge[tree$edge[ ,1] %in% nodeNr,2]
+    nodeNr <- children[children > length(tree$tip.label)]
+    tips <- c(tips, children[children <= length(tree$tip.label)])
+    if( length(nodeNr) == 0)
+      break
+  }  
+  return(tips)
+}
+
+# spcTree$tip.label[which.tips("H4c",tree=spcTree)]
+  
+
+```
+
+Starting out with `r length(goodTrees)` trees with out-group. Further we demand for each tree that:
+
+* Rice is part of its out-group.
+* of the out-species, rice is the closest to the pooids (correct topology within out-group)
+* each of the in-species form monophyletic clades.
+
+```{r filterFirstRound, echo=FALSE}
+# Keep only trees with rice and where each species form a clan
+idx <- goodLens[ ,"Os_R"]>0 & goodTreeStats$allSpcAreClans
+
+# for trees that have Zm and/or Sb
+# check that Os form a clade with the pooids
+hasSbZm <- rowSums(goodLens[idx,c("Sb_R","Zm_R")])>0
+
+hasOsPooidClan <- !hasSbZm
+sapply(goodTrees[idx][hasSbZm],function(tree){
+  isClan(tree,!grepl("^Sb|^Zm",tree$tip.label))  
+}) -> hasOsPooidClan[hasSbZm]
+
+idx[idx] <- hasOsPooidClan
+```
+
+
+This leaves `r sum(idx)` trees. Using these trees I have counted the number of times each of the splits in the species tree is observed (blue boxes in figure below). The pink boxes is the number of trees where all splits under that branch are conforming to the species tree. 
+
+
+```{r plotObservedSpcSplits, echo=FALSE,fig.height=7}
+
+# For each hypothesis/node in species tree, check if species in the branch forms a clade
+sapply(hSpcs,function(spcs){
+  pattern <- paste(spcPatterns[spcs],collapse="|")
+  sapply(goodTrees[idx],function(tree){
+    isClan(tree,grepl(pattern,tree$tip.label))
+    #plot.phylo(tree,tip.color = 1+grepl(pattern,tree$tip.label),show.node.label = T)
+  })
+}) -> isGoodClade
+
+
+isAllGoodClade <- t(apply(isGoodClade,1,cumsum)==1:5)
+
+plot.phylo(spcTree,show.node.label = T)
+nodelabels(colSums(isGoodClade)[match(spcTree$node.label,colnames(isGoodClade))], 
+           adj = c(1, 1.2), frame = "r", bg="lightblue")
+nodelabels(colSums(isAllGoodClade)[match(spcTree$node.label,colnames(isGoodClade))],
+           adj = c(1, -0.2), frame = "r", bg="pink")
+
+```
+
+
+There are only `r colSums(isAllGoodClade)["H4a"]` trees that has the same topology as the species tree, but if we were to ignore the order among the basal species and the order among the core species, i.e. only require the basal/core split, there would `r colSums(isGoodClade)["H4b"]`.
+
+Note that the counts above don't take into account missing species.
+
+```{r countSpecies, echo=FALSE}
+sapply(spcPatterns,function(pattern){
+  rowSums(goodLens[idx, grep(pattern,colnames(goodLens)),drop=F])>0
+}) -> hasSpcs
+cat("Trees that contain each species")
+colSums(hasSpcs)
+```
+
+### Suggested rules to decide which hypotheses to test
+
+(Each hypothesis corresponds to a split in the species tree)
+
+1. (General topology) The tree has to have a correct basal/core split (core including BrDi)
+2. (missing species) The earliest diverging species after the split to test has to exist plus at least one other
+3. (topology) The earliest diverging species after the split to test has to be in correct order, i.e. both the tested split snd the next split has to be correct.
+
+Applying these three rules we need to run codeml this many times for each split:
+```{r ruleCountTree, echo=FALSE,fig.height=7}
+rule1pass <- isGoodClade[ ,"H4b"]
+
+sapply(hSpcs,function(spcs){
+  firstBranching <- rev(spcs)[1]
+  otherSubSpcs <- rev(spcs)[-1]
+  # has firstBranching and any of otherSubSpcs
+  hasSpcs[ ,firstBranching] & apply(hasSpcs[,otherSubSpcs,drop=F],1,any)
+}) -> rule2pass
+
+rule3pass <- isGoodClade & isGoodClade[ ,c(1,1:4)]
+
+allRulesPassed <- rule3pass & rule2pass & rule1pass
+
+plot.phylo(spcTree,show.node.label = T)
+nodelabels(colSums(allRulesPassed)[match(spcTree$node.label,colnames(allRulesPassed))], 
+           adj = c(1, 1.2), frame = "r", bg="lightblue")
+
+```
