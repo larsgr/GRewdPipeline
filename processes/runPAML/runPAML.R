@@ -214,8 +214,8 @@ doPAML <- function(tree, grpID, codonAlnPath, outGrpDir){
       # mark the tree
       markedTree <- markTree(tree, spc2pattern(hSpcs[[h]]))
       
-      # Check if H4a mark ends up on the root (occurs if there is only one out-species)
-      if( h=="H4a" & grepl("#1;$",write.tree( markedTree )) ){
+      # Check if mark ends up on the root (occurs if there is only one out-species)
+      if( grepl("#1;$",write.tree( markedTree )) ){
         cat("resolve root for",grpID,"\n")
         
         # resolve the root        
