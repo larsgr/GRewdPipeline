@@ -222,7 +222,7 @@ doPAML <- function(tree, grpID, codonAlnPath, outGrpDir){
         rootTree <- root( phy = tree, outgroup = grep(outGrpPattern,tree$tip.label),
                           resolve.root = T )
         # remove labels
-        rootTree$node.label <- rep("",tree$Nnode)
+        rootTree$node.label <- rep("",rootTree$Nnode)
 
         # mark the tree again
         markedTree <- markTree(rootTree, spc2pattern(hSpcs[[h]]))
