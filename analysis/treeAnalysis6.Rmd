@@ -16,6 +16,9 @@ source("~/GRewd/pipeline/R/orthoGrpTools.R")
 ```
 
 ```{r loadData, echo=FALSE, cache=TRUE}
+# output:
+hTestableFile <- "~/GRewd/pipeline/data/hTestable.RDS"
+
 spcTree <- read.tree(text = "(((((((LoPe:1,HoVu:1)H4c:1,BrDi:2)H4b:1,MeNu:3)H4e:1,StLa:4)H4d:1,NaSt:5)H4a:1,Os_R:6):1,(Zm_R:2,Sb_R:2):5):0;")
 
 goodTrees <- readRDS("/mnt/NOBACKUP/mariansc/share/orthos/splitGroups/goodTrees.rds")
@@ -51,6 +54,11 @@ dimnames(goodLens) <- dimnames(goodGrps)
 
 
 ```
+
+### output
+
+* `~/GRewd/pipeline/data/hTestable.RDS` - Matrix of hypotheses that are testable in codeml (hypothesis in columns and groups in rows)
+
 
 ```{r defFuns, echo=FALSE}
 # Check if tips (given by logical vector) form a clan in the tree
@@ -169,4 +177,9 @@ plot.phylo(spcTree,show.node.label = T)
 nodelabels(colSums(allRulesPassed)[match(spcTree$node.label,colnames(allRulesPassed))], 
            adj = c(1, 1.2), frame = "r", bg="lightblue")
 
+# save the allRulesPassed matrix
+
+hTestable <- allRulesPassed[apply(allRulesPassed,1,any), ]
+
+saveRDS(hTestable,hTestableFile)
 ```
