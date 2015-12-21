@@ -179,23 +179,28 @@ doPAML <- function(tree, grpID, codonAlnPath, outGrpDir){
   hSpcs <- list(
     H4c = c("LoPe","HoVu"),
     H4b = c("LoPe","HoVu","BrDi"),
-    H4e = c("LoPe","HoVu","BrDi","MeNu"),
     H4d = c("LoPe","HoVu","BrDi","MeNu","StLa"),
     H4a = c("LoPe","HoVu","BrDi","MeNu","StLa","NaSt")
   )
 
-  # first branching species after split exists
-  hasFirstBranchingSpc <- function(tree,h){
-    firstBranching <- rev(hSpcs[[h]])[1]
-    otherSubSpcs <- rev(hSpcs[[h]])[-1]
-    return( sum(grepl(spc2pattern(firstBranching),tree$tip.label)) > 0 &
-            sum(grepl(spc2pattern(otherSubSpcs),tree$tip.label)) > 0  )
-  }
-
-  hasFirstBranchingSplit <- function(tree,h){
-    otherSubSpcs <- rev(hSpcs[[h]])[-1]
-    return( isClan(tree,grepl(spc2pattern(hSpcs[[h]]),tree$tip.label)) &
-              isClan(tree,grepl(spc2pattern(otherSubSpcs),tree$tip.label))  )
+  hSpcsEarlistDiverging <- list(
+    H4c = c("LoPe","HoVu"),
+    H4b = "BrDi",
+    H4d = c("MeNu","StLa"),
+    H4a = "NaSt"
+  )
+  
+  # For a given tree, check which hypotheses that can be tested (rule 2+3)
+  checkRules <- function(tree){
+    sapply(names(hSpcs), function(h){
+      # Rule 2: (missing species) The earliest diverging species after the tested split (in the species tree)
+      #   has to exist (in case of H4d either StLa or MeNu).
+      (sum(grepl(spc2pattern(hSpcsEarlistDiverging[[h]]),tree$tip.label)) > 0)  &
+        #   And there has to be atleast two species after the split.
+        (sum(grepl(spc2pattern(hSpcs[[h]]),tree$tip.label)) >= 2) &
+        # Rule 3: (topology) The tested split has to be correct
+        isClan(tree,grepl(spc2pattern(hSpcs[[h]]),tree$tip.label))
+    })
   }
   
   # reroot the tree with the outGroup
@@ -206,38 +211,37 @@ doPAML <- function(tree, grpID, codonAlnPath, outGrpDir){
   # remove edge lengths
   tree$edge.length <- NULL
   
-  # for each hypothesis:
-  for( h in names(hSpcs)){
-    # Only run if subGrpPattern exists in tree and
-    # if current split and next split is good
-    if( hasFirstBranchingSpc(tree,h) & hasFirstBranchingSplit(tree,h) ){
-      # mark the tree
-      markedTree <- markTree(tree, spc2pattern(hSpcs[[h]]))
-      
-      # Check if mark ends up on the root (occurs if there is only one out-species)
-      if( grepl("#1;$",write.tree( markedTree )) ){
-        cat("resolve root for",grpID,"\n")
-        
-        # resolve the root        
-        rootTree <- root( phy = tree, outgroup = grep(outGrpPattern,tree$tip.label),
-                          resolve.root = T )
-        # remove labels
-        rootTree$node.label <- rep("",rootTree$Nnode)
-
-        # mark the tree again
-        markedTree <- markTree(rootTree, spc2pattern(hSpcs[[h]]))
-      }
-      
-      #plot.phylo(markedTree,show.node.label = T,main=h)
-      
-      runCodeML( markedTree=markedTree,
-                 outFile=file.path( outGrpDir, paste(grpID,h,"H0.out",sep = "_") ),
-                 fix_omega = 1 )    
+  # check which hypotheses that can be tested on this tree
+  hTestable <- checkRules(tree)
+  
+  # for each testable hypothesis:
+  for( h in names(hSpcs)[hTestable]){
+    # mark the tree
+    markedTree <- markTree(tree, spc2pattern(hSpcs[[h]]))
     
-      runCodeML( markedTree=markedTree,
-                 outFile=file.path( outGrpDir, paste(grpID,h,"H1.out",sep = "_") ),
-                 fix_omega = 0 )
+    # Check if mark ends up on the root (occurs if there is only one out-species)
+    if( grepl("#1;$",write.tree( markedTree )) ){
+      cat("resolve root for",grpID,"\n")
+      
+      # resolve the root        
+      rootTree <- root( phy = tree, outgroup = grep(outGrpPattern,tree$tip.label),
+                        resolve.root = T )
+      # remove labels
+      rootTree$node.label <- rep("",rootTree$Nnode)
+
+      # mark the tree again
+      markedTree <- markTree(rootTree, spc2pattern(hSpcs[[h]]))
     }
+    
+    #plot.phylo(markedTree,show.node.label = T,main=h)
+    
+    runCodeML( markedTree=markedTree,
+               outFile=file.path( outGrpDir, paste(grpID,h,"H0.out",sep = "_") ),
+               fix_omega = 1 )    
+  
+    runCodeML( markedTree=markedTree,
+               outFile=file.path( outGrpDir, paste(grpID,h,"H1.out",sep = "_") ),
+               fix_omega = 0 )
   }
 }
 

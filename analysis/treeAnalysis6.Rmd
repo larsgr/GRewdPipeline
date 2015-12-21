@@ -18,6 +18,7 @@ source("~/GRewd/pipeline/R/orthoGrpTools.R")
 ```{r loadData, echo=FALSE, cache=TRUE}
 # output:
 hTestableFile <- "~/GRewd/pipeline/data/hTestable.RDS"
+hTestableFile2 <- "~/GRewd/pipeline/data/hTestable2.RDS"
 
 spcTree <- read.tree(text = "(((((((LoPe:1,HoVu:1)H4c:1,BrDi:2)H4b:1,MeNu:3)H4e:1,StLa:4)H4d:1,NaSt:5)H4a:1,Os_R:6):1,(Zm_R:2,Sb_R:2):5):0;")
 
@@ -35,6 +36,10 @@ spcPatterns <- c(
   HoVu="^H",
   LoPe="^LoPe"
 )
+
+spc2pattern <- function(spcs){
+  paste(spcPatterns[spcs],collapse="|")
+}
 
 
 hSpcs <- list(
@@ -57,10 +62,15 @@ dimnames(goodLens) <- dimnames(goodGrps)
 
 ### output
 
-* `~/GRewd/pipeline/data/hTestable.RDS` - Matrix of hypotheses that are testable in codeml (hypothesis in columns and groups in rows)
+* (DEPRECATED) `~/GRewd/pipeline/data/hTestable.RDS` - Matrix of hypotheses that are testable in codeml (hypothesis in columns and groups in rows)
+* `~/GRewd/pipeline/data/hTestable2.RDS` - Matrix of hypotheses that are testable in codeml according to the alternative rules (hypothesis in columns and groups in rows)
 
 
 ```{r defFuns, echo=FALSE}
+matchNode <- function(nodeLabels, tree){
+  match(nodeLabels,tree$node.label)+length(tree$tip.label)
+}
+
 # Check if tips (given by logical vector) form a clan in the tree
 isClan <- function(tree, isInGrp){
   clans = getClans(tree)
@@ -156,7 +166,7 @@ colSums(hasSpcs)
 
 1. (General topology) The tree has to have a correct basal/core split (core including BrDi)
 2. (missing species) The earliest diverging species after the split to test has to exist plus at least one other
-3. (topology) The earliest diverging species after the split to test has to be in correct order, i.e. both the tested split snd the next split has to be correct.
+3. (topology) The earliest diverging species after the split to test has to be in correct order, i.e. both the tested split and the next split has to be correct.
 
 Applying these three rules we need to run codeml this many times for each split:
 ```{r ruleCountTree, echo=FALSE,fig.height=7}
@@ -182,4 +192,78 @@ nodelabels(colSums(allRulesPassed)[match(spcTree$node.label,colnames(allRulesPas
 hTestable <- allRulesPassed[apply(allRulesPassed,1,any), ]
 
 saveRDS(hTestable,hTestableFile)
+```
+
+## Alternative 2: Collapse Stipa/Melica to a multiphyletic split
+
+Because it is hard to determine the phylogeny of Stipa and Melica it makes sense to collapse the split.
+
+
+```{r plotObservedSpcSplits2, echo=FALSE,fig.height=7}
+# New species tree with collapse Stipa/Melica
+spcTree2 <- read.tree(text = "((((((LoPe:1,HoVu:1)H4c:1,BrDi:2)H4b:1,MeNu:3,StLa:3)H4d:1,NaSt:4)H4a:1,Os_R:5):1,(Zm_R:2,Sb_R:2):4):0;")
+
+# remove the H4e
+isGoodClade2 <- isGoodClade[,c("H4c","H4b","H4d","H4a")]
+isAllGoodClade2 <- t(apply(isGoodClade2,1,cumsum)==1:4)
+
+plot.phylo(spcTree2,show.node.label = T)
+
+nodelabels(colSums(isGoodClade2),node = matchNode(colnames(isGoodClade2),spcTree2),
+           adj = c(1, 1.2), frame = "r", bg="lightblue")
+nodelabels(colSums(isAllGoodClade2),node = matchNode(colnames(isAllGoodClade2),spcTree2),
+           adj = c(1, -0.2), frame = "r", bg="pink")
+
+```
+
+
+### New rules to decide which hypotheses to test
+
+(Each hypothesis corresponds to a split in the species tree)
+
+1. (General topology) The tree has to have a correct basal/core split (core including BrDi)
+2. (missing species) The earliest diverging species after the split (in the species tree) to test has to exist (in case of H4d either StLa or MeNu) and there has to be atleast two species after the split.
+3. (topology) The tested split has to be correct.
+
+Applying these three rules we need to run codeml this many times for each split:
+```{r ruleCountTree2, echo=FALSE,fig.height=7}
+
+# remove the H4e hypothesis
+hSpcs2 <- hSpcs[-which(names(hSpcs)=="H4e")]
+# The earliest diverging species after each split 
+hSpcsEarlistDiverging <- list(
+    H4c = c("LoPe","HoVu"),
+    H4b = "BrDi",
+    H4d = c("MeNu","StLa"),
+    H4a = "NaSt"
+)
+
+# For a given tree, check which hypotheses that can be tested (rule 2+3)
+checkRules <- function(tree){
+  sapply(names(hSpcs2), function(h){
+    # Rule 2: (missing species) The earliest diverging species after the tested split (in the species tree)
+    #   has to exist (in case of H4d either StLa or MeNu).
+    (sum(grepl(spc2pattern(hSpcsEarlistDiverging[[h]]),tree$tip.label)) > 0)  &
+    #   And there has to be atleast two species after the split.
+    (sum(grepl(spc2pattern(hSpcs2[[h]]),tree$tip.label)) >= 2) &
+    # Rule 3: (topology) The tested split has to be correct
+    isClan(tree,grepl(spc2pattern(hSpcs[[h]]),tree$tip.label))
+  })
+}
+
+rule1pass <- isGoodClade[ ,"H4b"]
+
+trees <- goodTrees[idx][rule1pass]
+
+allRulesPassed2 <- t(sapply(trees,checkRules))
+
+plot.phylo(spcTree2,show.node.label = T)
+nodelabels(colSums(allRulesPassed2), node = matchNode(colnames(allRulesPassed2),spcTree2),
+           adj = c(1, 1.2), frame = "r", bg="lightblue")
+# nodelabels(colSums(allRulesPassed), node = matchNode(colnames(allRulesPassed),spcTree2),
+#            adj = c(1, -0.2), frame = "r", bg="pink")
+
+
+# save the allRulesPassed2 matrix
+saveRDS(allRulesPassed2,hTestableFile2)
 ```
