@@ -1,0 +1,56 @@
+Contig	Dicktoo_Chill_logFC	Dicktoo_freeze_logFC	Bonus_Cold_LogFC	Control_avg	ST_avg	PLC_avg	POC_avg	Annotation
+Contig2495_s_at	-2,77	-3,02	-2,19	1661,82	478,42	386,37	1043,49	Vacuolar invertase [Triticum aestivum]
+Contig4701_at	-2,26	-2,10	-3,97	50,00	23,67	19,32	52,96	Wound-responsive protein, / DNA-binding protein DSP1
+Contig2493_s_at	-2,17	-2,21	-2,03	1015,32	264,75	231,85	625,58	Beta-fructofuranosidase (Triticum aestivum)
+Contig23584_at	-1,98	-2,03	-1,60	181,00	77,26	82,81	171,39	Unknown
+Contig5630_at	-1,90	-2,00	-1,71	171,06	68,44	53,02	141,64	Unknown
+Contig16592_at	-1,83	-2,50	-1,74	324,13	86,05	83,67	235,71	Dynein light chain type 1 domain containing protein
+Contig4011_at	-1,79	-2,21	-1,57	813,72	337,69	72,98	589,95	Inositol oxygenase, putative
+Contig3212_s_at	-1,56	-3,95	-4,11	181,96	87,14	29,59	38,76	Polyamine oxidase (Hordeum vulgare)
+Contig7434_at	1,37	2,37	2,50	292,93	611,74	596,60	313,02	Proteasome-related, / 26S proteasome non-ATPase regulatory subunit, (Ricinus communis)
+Contig6505_at	1,40	1,43	4,06	322,06	4333,57	4052,52	1625,56	Low temperature-induced protein (Hordeum vulgare) / Stress-induced hydrophobic peptide (Populus trichocarpa)
+Contig6173_at	1,40	1,93	1,53	293,29	1144,39	1044,56	439,40	P-type ATPase (Hordeum vulgare)
+Contig4520_at	1,41	1,85	2,44	102,53	1378,14	778,29	471,71	Cold acclimation protein WCOR615 (Triticum aestivum)
+Contig11213_at	1,42	3,05	1,56	87,91	315,34	308,69	137,51	Unknown
+Contig13719_at	1,52	2,46	4,30	47,54	130,28	94,90	56,35	Unknown
+Contig6752_s_at	1,58	3,22	3,51	150,81	2374,78	1081,17	427,91	Unknown
+HV06O23u_at	1,64	2,92	1,62	148,86	416,29	325,44	195,71	Cleavage and polyadenylation specificity factor subunit 5, putative
+Contig1337_s_at	1,68	2,00	6,32	1467,44	3349,43	5365,03	3185,39	Cold-regulated protein 2 (Hordeum vulgare)
+Contig2855_at	1,77	2,34	2,79	1076,73	3677,95	2216,59	1459,33	"Dehydrin; DHN8 (Hordeum vulgare]"
+Contig4621_at	1,78	2,03	4,39	1660,77	4596,56	6813,12	4511,14	Cold acclimation protein WCOR518  (proline rich protein homolog) (Triticum aestivum)
+Contig13656_at	1,83	3,41	4,01	647,02	2790,00	1388,77	900,63	Unknown
+Contig3810_s_at	1,87	2,25	1,90	166,28	738,34	401,44	200,98	Glycosyl transferase 8 domain containing protein, putative
+Contig11076_at	1,89	2,74	3,61	388,59	2463,33	1035,83	718,17	Nuclease (Oryza sativa]
+Contig3112_at	1,91	1,93	4,89	967,68	6666,78	6227,12	3006,11	Cold acclimation protein WCOR413 (Triticum aestivum)
+Contig943_s_at	1,99	2,90	2,80	222,00	1135,00	1416,87	353,90	Metallothionein-like protein(Hordeum vulgare)
+Contig3810_at	2,19	2,75	1,78	153,53	851,26	496,80	164,43	Galactinol synthase (Triticum aestivum)
+Contig16582_at	2,35	2,96	3,21	1087,83	2587,14	2930,89	2576,53	Unknown
+Contig8641_at	2,40	2,77	1,66	214,30	620,63	504,29	278,18	Phosphoethanolamine cytidylyltransferase (Hordeum vulgare)
+Contig11397_s_at	2,58	3,08	2,33	89,00	1454,72	885,75	484,99	Unknown
+Contig7003_at	2,60	3,40	4,62	78,48	490,11	275,27	177,88	Unknown
+Contig2738_s_at	2,62	3,40	2,61	141,12	317,20	372,49	203,39	Beta-glucosidase (Musa acuminata)
+Contig6751_at	2,62	3,60	3,52	40,46	505,04	470,45	61,87	LEA (Hordeum vulgare)
+HV_CEb0007N06r2_at	2,81	4,66	4,92	27,87	148,50	121,72	33,39	Aquaporin protein, putative
+Contig12748_at	2,82	3,95	5,18	69,91	3469,12	689,45	241,65	Unknown
+Contig7004_at	2,86	4,01	3,43	13,58	40,15	27,31	18,90	Unknown
+Contig10151_s_at	2,91	3,33	4,10	523,19	3987,90	3848,96	2405,90	Unknown
+Contig4281_s_at	2,92	3,66	2,35	79,08	1934,77	358,48	122,49	Cold-regulated protein (Hordeum vulgare] / phosphatidylethanolamine-binding protein
+Contig6933_s_at	2,93	3,62	3,68	607,33	1245,80	2712,14	1525,49	Defensin (Triticum aestivum)
+Contig11396_at	3,13	4,31	3,42	25,52	377,58	220,31	101,68	LEA (Hordeum vulgare)
+Contig11241_at	3,19	5,42	3,39	70,60	193,49	148,89	116,73	Apoplastic invertase 1 (Hordeum vulgare)
+Contig1335_at	3,56	4,66	5,96	108,99	315,52	490,44	93,92	BLT14.2 protein (Hordeum vulgare) / Low temperature induced protein
+Contig4760_s_at	3,62	5,18	5,85	104,64	2639,03	995,86	156,20	Dehydrin (Triticum turgidum) / Late embryogenesis abundant protein LEA14-A (Oryza sativa)
+Contig10150_at	3,72	4,08	5,90	332,69	3291,09	3051,90	1708,87	LEA-like
+Contig2812_at	4,13	4,65	2,92	81,20	1872,39	2403,65	821,46	Cold-responsive LEA/RAB-related COR protein
+Contig19953_at	4,15	5,83	7,80	67,14	710,27	2238,65	106,39	Acclimation protein (Secale cereale)
+Contig3668_at	4,72	5,61	6,92	94,90	692,18	2148,00	251,06	Ice recrystallisation inhibition protein (Lolium perenne)
+Contig3814_at	4,77	4,89	5,34	338,61	2261,89	2165,72	431,07	Delta l pyrroline-5-carboxylate synthetase (Oryza sativa)
+Contig6859_at	4,94	5,65	8,74	15,48	162,46	348,73	67,98	Low temperature induced protein (Hordeum vulgare)
+Contig7221_s_at	5,11	6,43	6,98	258,93	790,37	2017,07	532,56	Ice recrystallization inhibition protein-like protein (Lolium perenne) 
+AF069331_s_at	5,27	5,81	7,16	148,43	2179,91	3582,89	631,52	Low temperature induced protein (Hordeum vulgare)
+HVSMEa0015E13r2_s_at	6,06	6,04	7,32	62,15	3019,94	5344,58	1007,57	Cor14b protein precursor (Hordeum vulgare)
+Contig3670_at	6,20	6,88	7,91	70,36	1205,47	3243,12	259,01	Ice recrystallization inhibition protein 1 (Triticum aestivum)
+Contig1717_s_at	6,53	6,95	8,15	51,26	2092,08	2532,63	160,91	Dehydrin 5 (Hordeum vulgare)
+Contig24850_at	6,56	7,75	7,49	24,20	226,56	196,29	128,71	Ice recrystallization inhibition protein 2 precursor (Triticum aestivum)
+baak1p18_s_at	6,67	7,03	8,22	30,56	516,35	429,78	274,71	Cold acclimation protein WCS19 (Triticum aestivum)
+HVSMEa0006I22r2_s_at	8,30	8,42	9,16	17,87	4018,73	4192,75	282,07	Dehydrin 5 (Hordeum vulgare)

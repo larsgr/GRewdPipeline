@@ -1,0 +1,189 @@
+---
+title: "Validate using the core cold response genes from the Greenup study"
+output: html_document
+---
+
+### Goal of analysis
+
+Validate that our data can detect cold responsive genes by comparing with a set of genes that have been identified as responsive to cold in an earlier study, specifically the genes in table S10 "A core set of low-temperature responsive contigs in barley" from [Greenup et al. 2011](journals.plos.org/plosone/article?id=10.1371/journal.pone.0017900)
+
+
+```{r loadLibraries, echo=FALSE, message=FALSE}
+library(DESeq2)
+library(stringr)
+
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+
+```{r loadData, echo=FALSE, cache=TRUE}
+# define paths:
+orthoPath <- "/mnt/NOBACKUP/mariansc/share/orthos"
+
+#####
+# Input data (from the Greenup study)
+blastOutFile <- "~/GRewd/pipeline/indata/genesOfInterrest2/COR_genes_VS_allProteomes.blastx"
+annotTblFile <- "~/GRewd/pipeline/indata/genesOfInterrest2/TableS10.txt"
+
+# load annotation table
+annotTbl <- read.table(annotTblFile,sep="\t",header=T,stringsAsFactors = F,dec = ",")
+
+# load blast results
+bres <- read.table(blastOutFile, stringsAsFactors = F,
+                   col.names = c("qseqid", "sseqid", "pident", "length", 
+                                 "mismatch", "gapopen", "qstart", "qend",
+                                 "sstart", "send", "evalue", "bitscore"))
+
+
+
+# load groups
+grpsTbl <- loadOrthoGrpsTable(orthoGrpFile = file.path(orthoPath,"orthoMCL/groups.txt"))
+grps <- OrthoGrpTableToArray(grpsTbl)
+
+goodGrpsTbl <- loadOrthoGrpsTable(file.path(orthoPath,"splitGroups/goodGroups.txt"))
+goodGrps <- OrthoGrpTableToArray(goodGrpsTbl)
+
+# load DE
+load(file.path(orthoPath,"DESeq/DE.RData"))
+
+```
+
+### Mapping barley contigs to our sequences
+
+The sequences of the barley low temperature induced (LTI) genes where blasted against our sequences to identify the corresponding genes in our dataset. Find best match to Hv_R for each query sequence. If several query sequences matches same Hv_R sequence, only use best hit. Match query sequence to each of the de-novo species and pick only the best hits that are in the same grpID as the Hv_R match.
+
+
+```{r coldGenes, echo=F, results="asis"}
+
+# get the Group IDs for the blast hits
+bres$grpID <- grpsTbl$grpID[ match(bres$sseqid, grpsTbl$seqID)]
+bres$grpIDgood <- goodGrpsTbl$grpID[ match(bres$sseqid, goodGrpsTbl$seqID)]
+
+# use the grps in tbl.. 
+# If split group exists then that can be used
+# Check that there is a hit in Hv_R
+
+# get blast hits for this spc with grpID
+Hv_bres <- bres[ grepl("Hv_R",bres$sseqid) & !is.na(bres$grpID), ]
+# Keep only best hits per query
+Hv_bres <- Hv_bres[match(unique(Hv_bres$qseqid),Hv_bres$qseqid), ]
+
+# sort on grpID and bitscore
+Hv_bres <- Hv_bres[order( Hv_bres$grpID, Hv_bres$bitscore, decreasing=T), ]
+# Select only best hit per Hv_R sequence
+Hv_bres <- Hv_bres[match(unique(Hv_bres$grpID),Hv_bres$grpID),]
+
+# For each species. find best hit per query sequence 
+sapply( c("BrDi","HoVu","MeNu1","StLa","NaSt"), function(spc){
+  # get blast hits for this spc with grpID
+  spcBres <- bres[ grepl(spc,bres$sseqid) & !is.na(bres$grpID), ]
+  # only those that are also in Hv_R
+  spcBres <- spcBres[spcBres$qseqid %in% Hv_bres$qseqid, ]
+  
+  # select only those that have qseq/grpID as in Hv_bres
+  Hv_idx <- match(spcBres$qseqid,Hv_bres$qseqid)
+  hasSameGrp <- spcBres$grpID == Hv_bres$grpID[Hv_idx]
+
+  spcBres <- spcBres[ hasSameGrp, ]
+
+  # Keep only best hits (paralog?) per query
+  spcBres <- spcBres[match(Hv_bres$qseqid,spcBres$qseqid), ]
+  
+  return(spcBres$sseqid)
+}) -> seqIDmat
+
+allNA <- apply(is.na(seqIDmat),1,all)
+Hv_bres <- Hv_bres[!allNA,]
+seqIDmat <- seqIDmat[!allNA, ]
+seqIDmat <- sub("^.+\\|","",seqIDmat)
+```
+
+### Heatmap with best hit
+
+Heatmap of peak log fold-change. Grey means not significant (padj>0.05 or |lfc|<1). White means no ortholog sequence found in orthogroup.
+
+
+```{r heatmapAll, echo=FALSE,dev='svg'}
+
+
+sapply( c("BrDi","HoVu","MeNu1","StLa","NaSt"), function(spc){
+  DE[[spc]]$resRamp$log2FoldChange[match(sub("[^|]*\\|","",seqIDmat[,spc]), rownames(DE[[spc]]$resRamp))]
+}) -> lfcMat
+
+sapply( c("BrDi","HoVu","MeNu1","StLa","NaSt"), function(spc){
+  DE[[spc]]$resRamp$padj[match(sub("[^|]*\\|","",seqIDmat[,spc]), rownames(DE[[spc]]$resRamp))]
+}) -> padjMat
+
+padjMat[is.na(padjMat)] <- 1
+sigMat <- lfcMat*as.numeric(padjMat<0.05)
+
+# rownames(statMat) <- Hv_bres$grpID
+# rownames(lfcMat) <- Hv_bres$grpID
+rownames(sigMat) <- annotTbl$Annotation[ match(Hv_bres$qseqid,annotTbl$Contig) ]
+fc <- annotTbl$Dicktoo_Chill_logFC[ match(Hv_bres$qseqid,annotTbl$Contig) ]
+# FCcols <- as.character( cut(fc,breaks=c(-20,seq(-5.5,5.5,by=1),20),
+#                             labels=colorRampPalette(c("blue","lightgrey","red"))(13) ) )
+FCcols <- as.character( cut(fc,breaks=c(-20,-4:-1,1:4,20),
+                            labels=colorRampPalette(c("blue","lightgrey","red"))(9)))
+
+idxOrder <- order(fc)
+# heatmap(statMat[idxOrder, ], breaks=c(-20,seq(-5.5,5.5,by=1),20),
+#         col=colorRampPalette(c("green","black","red"))(13),
+#         RowSideColors=FCcols[idxOrder],
+#         scale="none", Rowv = NA, Colv = NA, main="Peak stat of Barley LTI genes")
+
+m <- sigMat[idxOrder, c(2,1,3:5)]
+colnames(m) <- c("Hordeum","Brachypodium","Melica","Stipa","Nardus")
+heatmap(m, breaks=c(-20,-4:-1,1:4,20),cexRow = 1.5,
+        col=colorRampPalette(c("blue","lightgrey","red"))(9),
+        RowSideColors=FCcols[idxOrder], margins=c(9,30),
+        scale="none", Rowv = NA, Colv = NA, main="Peak fold change of Greenup genes")
+```
+
+### Significance test
+
+We want to test if our expression values for the orthologs in each species has the same response as the greenup genes. E.g. If the greenup gene is up-regulated, is our orthologous gene significantly up-regulated? To test if this is significant we count the number of orthologs that has the the same response as greenup (either up or down). Our orthologs can either be up, down or not significant. The null-hypothesis is that our orthologs just happen to be up/down regulated by chance. This is tested by picking random genes instead of the orthologs and checking how many that have the same response as the greenup genes. The random genes are picked from a filtered set that has a minimum expression and has an ortholog in Hv_R.
+
+
+```{r signficantTest, echo=FALSE, cache=TRUE}
+# hypergeometric method
+
+getNSignDE <- function(idx,spc,upDown){
+  signDE <- DE[[spc]]$resPeak$log2FoldChange[idx]*upDown > 1 &
+    DE[[spc]]$resPeak$padj[idx] < 0.05
+  
+  sum(signDE,na.rm = T)
+}
+
+sapply( c("BrDi","HoVu","MeNu1","StLa","NaSt"), function(spc){
+  isNA <- is.na(seqIDmat[,spc])
+  upDown <- sign(annotTbl$Dicktoo_Chill_logFC[ match(Hv_bres$qseqid,annotTbl$Contig) ])[!isNA]
+  
+  m <- getNSignDE(match(seqIDmat[!isNA,spc], rownames(DE[[spc]]$resPeak)),spc,upDown)
+  
+  # filter low expressed genes
+  allIdx <- which(DE[[spc]]$resPeak$baseMean > 10)
+  # filter genes with Hv_R ortholog
+  allIdx <- allIdx[rownames(DE[[spc]]$resPeak)[allIdx] %in% 
+                     unlist(grps[!sapply(grps[,"Hv_R"],is.null),spc])]
+  
+  n <- sum(!isNA)
+  N <- 100000L
+  x <- replicate(N,getNSignDE(sample(allIdx,size = n),spc,upDown))
+  
+  #hist(x,main=paste(spc,"significant DE =",m,"/",n,"=",signif(m/n,digits = 3)))
+  
+  plot(table(x),xlab="Number of random matches",ylab="Frequency",
+       main=paste(spc," Actual matches =",m,"/",n), sub=paste(N,"trials"))
+  points(0:max(x),dbinom(0:max(x),n,prob = mean(x)/n)*N)
+
+  p.val <- mean(x>=m)
+  p.val.binom <- pbinom(m-1,n,prob = mean(x)/n,lower.tail = F)
+
+  mtext(text = paste("Empirical P =",p.val, " Est. binomial P =",signif(p.val.binom,3)),side = 3,line = 0)
+  return(p.val)
+}) -> p.val
+
+
+
+```
