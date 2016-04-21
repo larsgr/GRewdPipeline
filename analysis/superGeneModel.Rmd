@@ -270,6 +270,25 @@ for(spc in spcs){
 
 
 
+```{r megaheatmap, echo=FALSE, eval=FALSE}
+sigMat <- lapply(DEmat, with, {abs(lfc) > 1 & pAdj < 0.05})
+sigRows <- apply(sigMat$peak | sigMat$ramp,1,all)
+table(sigRows)
+heatmap(cbind(DEmat$peak$stat[which(sigRows),],DEmat$ramp$stat[which(sigRows),])[,c(1,6,2,7,3,8,4,9,5,10)],
+        breaks=c(-20,seq(-5.5,5.5,by=1),20),labRow = NA,
+        col=colorRampPalette(c("green","black","red"))(13),#Rowv = NA,
+        scale="none", Colv = NA, main="Peak stat of Barley LTI genes")
+
+sigRows <- apply(sigMat$ramp,1,sum)>3
+
+heatmap(DEmat$ramp$lfc[which(sigRows),],
+        breaks=c(-20,seq(-5.5,5.5,by=1),20),labRow = NA,
+        col=colorRampPalette(c("blue","white","red"))(13),#Rowv = NA,Colv = NA,
+        scale="none",  main="Peak stat of Barley LTI genes")
+
+```
+
+
 ```{r StrangeThing, echo=FALSE, eval=FALSE}
 # grp100565.3 has no ortholog in NaSt yet has ramp effect?
 grps["grp100565.3",spcs]

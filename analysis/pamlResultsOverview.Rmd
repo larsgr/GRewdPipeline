@@ -14,10 +14,18 @@ source("~/GRewd/pipeline/R/orthoGrpTools.R")
 ```
 
 ```{r loadData, echo=FALSE}
+# output
+pamlResFile<-"~/GRewd/pipeline/data/pamlRes.RDS"
+dNdSallFile <- "~/GRewd/pipeline/data/dNdSall.RDS"
+
+
 orthoPath <- "/mnt/NOBACKUP/mariansc/share/orthos"
 
+#hTestable <- readRDS("~/GRewd/pipeline/data/hTestable.RDS") # from treeAnalysis6.Rmd
+hTestable <- readRDS("~/GRewd/pipeline/data/hTestable2.RDS") # from treeAnalysis6.Rmd
 
-pamlResFile<-"~/GRewd/pipeline/data/pamlRes.RDS"
+
+
 DEnewFile<-"~/GRewd/pipeline/data/DEnew.RDS"
 VSTnewFile<-"~/GRewd/pipeline/data/VSTnew.RDS"
 superExprMatrixFile <- "~/GRewd/pipeline/data/superExprMatrix.RDS"
@@ -78,14 +86,76 @@ if(!file.exists(pamlResFile)){
   pamlRes <- readRDS(pamlResFile) 
 }
 
-# remove NA's in H4a (probably caused by trees where the core clade is on the root and can't be marked)
-pamlRes$H4a <- pamlRes$H4a[!is.na(pamlRes$H4a$pVal), ]
-
-
-# convert to matrix of p-values
-pamlMat <- sapply(pamlRes, with, {pVal[match(rownames(expr),grpID)]})
+# # remove NA's in H4a (probably caused by trees where the core clade is on the root and can't be marked)
+# pamlRes$H4a <- pamlRes$H4a[!is.na(pamlRes$H4a$pVal), ]
+# 
+# 
+# # convert to matrix of p-values
+# pamlMat <- sapply(pamlRes, with, {pVal[match(rownames(expr),grpID)]})
 
 ```
+
+```{r check_hTestable, echo=FALSE, eval=FALSE}
+# check against hTestable
+
+sapply(colnames(hTestable), function(h){
+  testableGrpIDs <- rownames(hTestable)[hTestable[ ,h]]
+  testedGrpIDs <- testableGrpIDs[testableGrpIDs %in% pamlRes[[h]]$grpID]
+  return( c(nTestable = length(testableGrpIDs), 
+            nTested = length(testedGrpIDs),
+            nFailed = sum(is.na(pamlRes[[h]]$pVal[match(testedGrpIDs, pamlRes[[h]]$grpID)]))
+            ) )
+})
+
+```
+
+
+
+```{r load.dNdSall, echo=FALSE}
+if( !file.exists(dNdSallFile)){
+  
+  readPAMLdNdS <- function(pamlResFile){
+    # read PAML result file
+    cat("Reading",pamlResFile,"...\n")
+    txt <- readLines(pamlResFile)
+    
+    # Find the lines that have the dN/dS matrix
+    blanklines <- grepl("^$",txt)
+    neiGojoboriLine <- grep("Nei & Gojobori 1986. dN/dS",txt)
+    # matrix starts after first blank line after the Nei & Gojobori reference
+    firstLine <- neiGojoboriLine + match(T,blanklines[neiGojoboriLine:(neiGojoboriLine+10)])
+    # stop at first blank line after matrix
+    lastLine <- firstLine + match(T,blanklines[firstLine:length(txt)]) - 2
+    txtdNdS <- txt[firstLine:lastLine]
+    
+    # Get the sequence IDs
+    seqIDs <- sub("^([^ ]+)[ -].*","\\1",perl=T,txtdNdS)
+    
+    # Extract the numbers
+    numbers <- as.numeric(unlist(stringr::str_extract_all(txtdNdS,"-?[0-9]\\.[0-9]{4}")))
+    
+    # Deinterleave the three values (dN/dS, dN and dS) and place into three matrices:
+    lapply(c(dNdS=1,dN=2,dS=3),function(ofs){
+      m <- matrix(0,length(seqIDs),length(seqIDs),dimnames = list(seqIDs,seqIDs))
+      m[upper.tri(m)] <- numbers[seq(ofs,to = length(numbers),by=3)]
+      t(m)
+    }) -> dNdSmat
+    return(dNdSmat)
+  }
+
+  pamlResFiles <- dir(PAMLpath,pattern = "grp.*.out$",recursive = T,full.names = T)
+  names(pamlResFiles) <- sub(".*/(grp[0-9\\.]+_.*).out","\\1", pamlResFiles,perl=T)
+  
+  # extract the dN/dS values from one file per grpID (e.g. H4b_H1)  
+  dNdSall <- lapply(pamlResFiles[grep("H4b_H1",names(pamlResFiles))],readPAMLdNdS)
+  
+  saveRDS(dNdSall,dNdSallFile)
+} else {
+  dNdSall <- readRDS(dNdSallFile)
+}
+```
+
+
 
 ### Postive selection
 ```{r pamlResPlot, echo=FALSE}
@@ -93,6 +163,55 @@ pamlMat <- sapply(pamlRes, with, {pVal[match(rownames(expr),grpID)]})
 pamlSign <- sapply(pamlRes, with, {sum(pVal < 0.05)})
 nPaml <- sapply(pamlRes, nrow)
 barplot(pamlSign/nPaml, ylab="proportion of sign. tests (p<0.05)",main="positive selection")
+```
+
+### Clustering of distance matrices
+```{r dmClustering, echo=FALSE}
+# normalize the dNdSall matrices
+# If multiple paralogs in one branch, take the first
+
+grpIDsHasAll <- rownames(lens)[grpData$isCoreClan & grpData$allSpcAreClans & 
+        apply(lens[,c("NaSt","MeNu1","StLa")]>0,1,all) &
+        apply(lens[,c("Bd_R","BrDi")]>0,1,any) &
+        apply(lens[,c("Hv_R","HoVu")]>0,1,any)]
+
+
+
+stdSpcs <- c("L", "H", "B", "M", "S", "N", "O", "s", "Z")
+stdVecSpcs <- outer(stdSpcs,stdSpcs,paste,sep="")
+stdVecSpcs <- stdVecSpcs[lower.tri(stdVecSpcs)]
+sapply(dNdSall,function(DM){
+  # Get species by taking the fist letter of seqID.
+  # To resolve StLa from Sb_R change "Sb" to "s" (L H B M S N O s Z)
+  spcs <- substring(sub("^Sb.*","s",rownames(DM$dN)),1,1)
+  idx <- match(stdSpcs,spcs)
+  dN <- DM$dN[idx,idx]
+  dimnames(dN) <- list(stdSpcs,stdSpcs)
+  return(setNames((dN+t(dN))[lower.tri(dN)],stdVecSpcs))
+}) -> std_dN
+
+
+
+mean_dN <- rowMeans(std_dN,na.rm = T)
+stdMat <- matrix(0.0, ncol=9, nrow=9,dimnames=list(stdSpcs,stdSpcs))
+stdMat[lower.tri(stdMat)] <- mean_dN
+plot(hclust(as.dist(stdMat)))
+
+# std_dNhasAll <- std_dN[stdVecSpcs[grepl("[NSMBH]{2}",stdVecSpcs)],
+#                        match(grpIDsHasAll, sub("^(grp[0-9\\.]+).*","\\1",perl=T,colnames(std_dN)))]
+# 
+# d <- dist(t(std_dNhasAll),method = "manhattan")
+# hc <- hclust(d)
+# ct <- cutree(tree = hc, k=35)
+# table(ct)
+# x <- std_dNhasAll[ ,ct==1]
+# 
+# stdSpcs2 <- c("H", "B", "M", "S", "N")
+# mean_dN <- rowMeans(x,na.rm = T)
+# stdMat <- matrix(0.0, ncol=5, nrow=5,dimnames=list(stdSpcs2,stdSpcs2))
+# stdMat[lower.tri(stdMat)] <- mean_dN
+# plot(hclust(as.dist(stdMat)))
+# heatmap(stdMat+t(stdMat),scale="none")
 ```
 
 

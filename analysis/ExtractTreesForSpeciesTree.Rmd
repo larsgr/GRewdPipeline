@@ -1,0 +1,531 @@
+---
+title: "ExtractTreesForSpeciesTree"
+output: html_document
+---
+
+```{r loadLibraries, echo=FALSE, message=FALSE}
+library(ape)
+library(phangorn)
+
+
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+```{r loadData, echo=FALSE, cache=TRUE}
+
+goodTrees <- readRDS("/mnt/NOBACKUP/mariansc/share/orthos/splitGroups/goodTrees.rds")
+goodTreeStats <- readRDS("/mnt/NOBACKUP/mariansc/share/orthos/splitGroups/goodTreeStats.rds")
+
+goodGrps <- loadOrthoGrpsArray(orthoGrpFile = "/mnt/NOBACKUP/mariansc/share/orthos/splitGroups/goodGroups.txt")
+
+# get number of genes per species per group
+goodLens <- unlist(lapply(goodGrps,length))
+dim(goodLens) <- dim(goodGrps)
+dimnames(goodLens) <- dimnames(goodGrps)
+
+```
+
+### Selecting trees to use for apecies tree inference
+
+Requirements:
+
+* All alignments must have the same species
+* At least one outgroup species
+* Only one sequence per species
+
+In addition I require that the core/basal split exists and all paralog sequences from each species is monophyletic. And then I suggest three alternatives:
+
+```{r selectTrees, echo=FALSE}
+singletonWithOsNoCoreClan <- goodTreeStats$allSpcAreClans & !goodTreeStats$isCoreClan &
+      apply(goodLens[,c("NaSt","StLa","MeNu1","Bd_R","Hv_R", "Os_R")]==1,1,all) 
+
+singletonWithOs <- goodTreeStats$allSpcAreClans & goodTreeStats$isCoreClan &
+      apply(goodLens[,c("NaSt","StLa","MeNu1","Bd_R","Hv_R", "Os_R")]==1,1,all) 
+      
+singletonWithAllOut <- goodTreeStats$allSpcAreClans & goodTreeStats$isCoreClan &
+        apply(goodLens[,c("NaSt","StLa","MeNu1","Bd_R","Hv_R","Os_R","Zm_R","Sb_R")]==1,1,all)
+
+paralogsWithAllOut <- goodTreeStats$allSpcAreClans & goodTreeStats$isCoreClan &
+        apply(goodLens[,c("NaSt","StLa","MeNu1","Bd_R","Hv_R","Os_R","Zm_R","Sb_R")]>0,1,all)
+```
+
+1. Exactly one sequence in NaSt, StLa, MeNu, Bd_R, Hv_R and Os_R (`r sum(singletonWithOs)`)
+2. Exactly one sequence in NaSt, StLa, MeNu, Bd_R, Hv_R, Os_R, Sb_R and Zm_R (`r sum(singletonWithAllOut)`)
+3. At least one sequence in NaSt, StLa, MeNu, Bd_R, Hv_R, Os_R, Sb_R and Zm_R (`r sum(paralogsWithAllOut)`). Resolve the paralogs by selecting the first (random?) paralog only.
+
+
+### Extract codon alignments
+
+* Extract only the sequences we want
+* Change the sequence ID's to two letter species ID (Ns, Sl, Mn, Bd, Hv...)
+
+```{r defFuns, echo=FALSE}
+# Read fasta file as named character vector
+readFasta <- function(inFastaFile){
+  # read fasta file
+  txt.fasta <- readLines(inFastaFile)
+  # convert to into named character vector
+  headerLines <- grepl("^>",txt.fasta)
+  seqIDs <- sub("^>","",txt.fasta[headerLines]) # OBS assumes only seqID on header
+  seqs <- tapply(txt.fasta[!headerLines],
+                 seqIDs[cumsum(headerLines)[!headerLines]],
+                 paste,collapse="")
+  return(seqs)
+}
+
+# Write named character vector as fasta file
+writeFasta <- function(seqs,outFastaFile){
+  write(paste0(">",names(seqs),"\n",seqs,collapse = "\n"), 
+        file = outFastaFile )
+}
+
+# remove columns with gaps in all sequences
+removeGapInAll <- function(seqs){
+  seqArray <- strsplit(seqs, split="")
+  gapMat <- sapply(seqArray, "==","-")
+  gapColumns <- apply(gapMat,1,all)
+  lapply(seqArray, function(seq){paste(seq[!gapColumns],collapse="")})
+}
+```
+
+
+```{r extractCodonAlignments, echo=FALSE, eval=FALSE}
+
+codonAlignmentFastaPath <- "/mnt/NOBACKUP/mariansc/share/orthos/pal2nal"
+
+spcPrefix <- c(Ns="NaSt", Sl="StLa", Mn="MeNu", Bd="Bd_R", Hv="Hv_R", Os="Os_R", Sb="Sb_R", Zm="Zm_R")
+spcAllOut <- c(Ns="NaSt", Sl="StLa", Mn="MeNu", Bd="Bd_R", Hv="Hv_R", Os="Os_R", Sb="Sb_R", Zm="Zm_R")
+spcWithOs <- c(Ns="NaSt", Sl="StLa", Mn="MeNu", Bd="Bd_R", Hv="Hv_R", Os="Os_R")
+
+renameSeqs <- function(seqIDs){
+  for(i in seq_along(spcPrefix)){
+    seqIDs <- sub(paste0("^",spcPrefix[i],".*"),names(spcPrefix)[i],seqIDs)
+  }
+  return(seqIDs)
+}
+
+extractSeqFasta <- function( grpID, outFastaPath, selectSeqFun,
+                             inFastaPath = codonAlignmentFastaPath, renameSeqFun = renameSeqs ){
+  # Find and load the corresponding alignment fasta file
+  # Split group IDs have a ".XX" suffix, get the base group ID:
+  grpID.noSplit <- sub("\\.[0-9]*","",grpID)
+  inFastaFile <- file.path(inFastaPath,paste0(grpID.noSplit,".cds.aln"))
+  
+  seqs <- readFasta(inFastaFile)
+  
+  # keep only seqs in group in case it is split
+  seqs <- seqs[grpToChar(goodGrps[grpID, ])]
+  
+  keepSeq <- grepl(paste0("^",spcAllOut,collapse="|"),names(seqs))
+  outSeqs <- seqs[selectSeqFun(names(seqs))]
+  names(outSeqs) <- renameSeqs(names(outSeqs))
+  writeFasta(outSeqs, file.path(outFastaPath,paste0(grpID,".cds.aln")))
+}
+
+Sys.umask(mode="0002")
+
+
+##### #2
+
+outFastaPath <- "~/GRewd/codonAlignments/singletonWithAllOut"
+dir.create(outFastaPath,recursive = T)
+
+for( grpID in rownames(goodGrps)[singletonWithAllOut]){
+  extractSeqFasta( grpID, outFastaPath = outFastaPath,
+                   selectSeqFun = function(seqIDs){
+                     grepl(paste0("^",spcAllOut,collapse="|"),seqIDs)
+                   } )
+}
+
+
+##### #1
+
+outFastaPath <- "~/GRewd/codonAlignments/singletonWithOs"
+dir.create(outFastaPath,recursive = T)
+
+for( grpID in rownames(goodGrps)[singletonWithOs]){
+  extractSeqFasta( grpID, outFastaPath = outFastaPath,
+                   selectSeqFun = function(seqIDs){
+                     grepl(paste0("^",spcWithOs,collapse="|"),seqIDs)
+                   } )
+}
+
+
+##### #3
+
+outFastaPath <- "~/GRewd/codonAlignments/paralogsWithAllOut"
+dir.create(outFastaPath,recursive = T)
+
+for( grpID in rownames(goodGrps)[ paralogsWithAllOut]){
+  extractSeqFasta( grpID, outFastaPath = outFastaPath,
+                   selectSeqFun = function(seqIDs){
+                     keep <- grepl(paste0("^",spcAllOut,collapse="|"),seqIDs)
+                     spcs <- renameSeqs(seqIDs[keep])
+                     keep[keep] <- seq_along(spcs) %in% match(unique(spcs),spcs)
+                     keep
+                   } )
+}
+
+
+```
+
+### Generate input files for BEAST
+
+```{r generateBeastInput, echo=FALSE, eval=FALSE}
+
+beastTemplate <- readLines('~/GRewd/pipeline/indata/BeastTemplate/dummy.txt')
+
+inFastaPath <- "~/GRewd/codonAlignments/singletonWithOs"
+outBeastPath <- "~/GRewd/codonAlignments/beast_singletonWithOs"
+dir.create(outBeastPath)
+
+fastaFiles <- dir(inFastaPath, full.names = T)
+
+for(fastaFile in fastaFiles){
+  # copy template
+  temp <- beastTemplate
+  
+  # read sequences
+  seqs <- readFasta(fastaFile)
+  
+  # set alignment length (is this necessary?)
+  temp <- gsub('nchar=19', paste0('nchar=', nchar(seqs[1])), temp)
+  
+  # insert sequences
+  for(seqID in names(seqs)){
+    temp <- sub( paste0("_insert_sequence_here_",seqID), toupper(seqs[seqID]),temp )
+  }
+
+  ali.name <- sub('\\.cds\\.aln', '', basename(fastaFile))
+  cat(ali.name,"\n")
+  
+  # set log and tree file names
+  temp <- gsub("dummy.trees", paste(ali.name, '.trees', sep=''), temp)
+  temp <- gsub("dummy.log",  paste(ali.name, '.log', sep=''), temp)
+  
+  writeLines(temp, con=file.path(outBeastPath, paste0(ali.name, '.xml')))
+}
+
+```
+
+### Run BEAST
+
+```{r runBeast, echo=FALSE, eval=FALSE}
+source("processes/SLURMscript/createSLURMscript.R")
+
+beastWorkDir <- "~/GRewd/codonAlignments/beastOut_singletonWithOs"
+dir.create(beastWorkDir)
+
+beastInputFiles <- dir(outBeastPath, full.names = T)
+
+commandListFile <- file.path(beastWorkDir, "commands.txt")
+writeLines(paste("beast",beastInputFiles),con = commandListFile)
+
+createSLURMarray(commandListFile,arraySize=150,
+                             workdir=beastWorkDir,
+                             preScript="module load beast",
+                             jobName="BigBeast")
+```
+
+```{r simenScripts, OLD funker ikke }
+library(plyr)
+library(ape)
+
+##################################################################
+## Function to read BEAST trees and produce pairwise distances  ##
+##################################################################
+
+makeCoalMatrix = function(dist.list, outgroup.taxa=c('Os'), MCMC.samples=length(dist.list)) # Is template nessecary? perhaps only use this for tree1 and then re-use?
+{
+  template <- dist.list[[1]]
+  collumns = colnames(template)
+  rows = rownames(template)
+  df.sp = ldply(rows, function(i) data.frame(sp1=rep(i, length(collumns)), sp2=collumns))
+  df.sp = df.sp[!df.sp$sp1 %in% outgroup.taxa & !df.sp$sp2 %in% outgroup.taxa , ]
+  df.nr = filter.reciprocal(df.sp) # final non-redundant set of pairwise comparisons
+  
+  nr.dm = MCMC.samples
+  coal.mt = matrix(NA, ncol=nrow(df.nr), nrow=nr.dm)
+  colnames(coal.mt) <- paste(df.nr$sp1, df.nr$sp2, sep='_')
+  
+  for(i in 1:MCMC.samples)
+  {
+    for(n in 1:nrow(df.nr))
+    {
+      coal.mt[i, n] <- dist.list[[i]][as.character(df.nr[n,1]), as.character(df.nr[n,2])]
+    }
+  }
+  
+  coal.mt
+}
+
+
+read.BEAST.tree = function(tree.file.path, verbouse=F, burnin=100, random1000=F)
+{
+  print(tree.file.path)
+  tree.lines= readLines(tree.file.path)
+  
+  # getting number of taxa:
+  ntax = tree.lines[grep('^Begin taxa;', tree.lines)+1]
+  ntax = sub('\tDimensions ntax=', '', ntax)
+  ntax = as.numeric(sub(';', '', ntax))
+  if(verbouse) print(paste('Number of taxa:', ntax))
+  
+  # getting df with taxa number and names
+  tax.name.start = grep('^Begin trees;', tree.lines)+2
+  tax.id = tree.lines[tax.name.start:(tax.name.start+ntax-1)]
+  tax.df = ldply(strsplit(tax.id, '\t\t| |,'), function(i) data.frame(tax.no=i[2], tax.name=i[3]))
+  if(verbouse) print('Produced taxa table......\n......fixing BEAST tree')
+  
+  # tree line manipulation and producing tree list with data to analyze
+  trees = tree.lines[grep('^tree ', tree.lines)][-c(1:(burnin))]   # remove shit before tree and burnin trees...
+  if(verbouse) print(paste('Removing', burnin, 'burnin trees.....'))
+  
+  if(random1000) 
+  {
+    trees = trees[sample(length(trees), 1000)]
+    print(paste('Only using', length(trees), 'random MCMC samples')) 
+  }
+  
+  trees.list = lapply(trees, function(tree)
+  {
+    BEASTtree <- unlist(strsplit(tree, '= \\[|\\] '))[4]  # split tree-string on rate info
+    BEASTtree.split = unlist(strsplit(BEASTtree, '\\[|\\]'))   # remove rate stuff drom trees
+    tre.data = BEASTtree.split[-grep('^\\&', BEASTtree.split)] # return clean tree
+    phy = read.tree(text=paste(tre.data, collapse='')) # read in phylo
+    phy$tip.label <- as.character(tax.df$tax.name[match(phy$tip.label, tax.df$tax.no)]) # change to species names
+    phy
+  })
+  
+  # make list of distance matrixes from trees
+  if(verbouse) print('Extracting node age distributions from all trees')
+  dist.list = lapply(trees.list, function(tree) { cophenetic.phylo(tree)/2 })
+  
+  # Get MCMC samples for each node in tree:
+  if(verbouse) print('Generating coalescent matrix for all pairwise taxa comparisons')
+  coal.matr = makeCoalMatrix(dist.list)
+  
+  # get lognormal parameters for each MCMC node sampling
+  if(verbouse) print('Estimating lognormal distribution parameters')
+  fitdistr.list = apply(coal.matr, 2, function(i) fitdistr(i, 'lognormal'))
+  fitdistr.df = t(ldply(fitdistr.list, function(i) data.frame(meanlog=i$estimate[[1]], sdlog=i$estimate[[2]])))
+  
+  # output list with MCMC and fitdistr.esitimates
+  if(verbouse) print('Returning MCMC and fitdist estimates')
+  list(node.distributions = coal.matr, fitdistr=fitdistr.df, trees=trees.list)
+  # make summary-list of MCMC samples and their fitdist*lognormal parameters
+}
+
+beastOutPath = "~/GRewd/codonAlignments/beastOut_singletonWithOs"
+
+treeFiles = dir(beastOutPath, pattern="trees", full.names = T)
+
+#TEST:  read in one tree
+t = read.BEAST.tree(treeFiles[1], verbouse = T)
+
+# read in all trees - takes time -
+collect.beast = lapply(treeFiles, function(treeFile) try(read.BEAST.tree(treeFile, verbouse = F, random1000=F), silent = T))
+
+RLinuxModules::moduleInit()
+RLinuxModules::module("load beast")
+
+home <- getwd()
+setwd(beastOutPath)
+system(paste("logcombiner",
+             "-burnin 100",
+             "-trees",paste(basename(treeFiles),collapse = " "),
+             "../combined.trees"))
+setwd(home)
+
+```
+
+```{r Simen Script, NEW funker}
+library(plyr)
+library(ape)
+
+##################################################################
+## Function to read BEAST trees and produce pairwise distances  ##
+##################################################################
+
+
+filter.reciprocal=function(bt){
+  qm <- paste(bt$sp1, bt$sp2)
+  sm <- paste(bt$sp2, bt$sp1)
+  if(length(qm)==0|length(sm)==0) { print('paste error'); return()}
+  res = !sm %in% qm
+  ma = match(qm, sm)
+  ma.r = 1:nrow(bt)
+  idx = !is.na(ma)
+  res = ma.r[idx][ma[idx]>ma.r[idx]]
+  res = c(res, which(is.na(ma)==T)) # add rows with unique qseqid and sseqid combos (not duplicated..)
+  bt[res, ]
+  
+}
+
+
+makeCoalMatrix = function(dist.list, outgroup.taxa=c('Os'), MCMC.samples=length(dist.list)) # Is template nessecary? perhaps only use this for tree1 and then re-use?
+{
+  template <- dist.list[[1]]
+  collumns = colnames(template)
+  rows = rownames(template)
+  df.sp = ldply(rows, function(i) data.frame(sp1=rep(i, length(collumns)), sp2=collumns))
+  df.sp = df.sp[!df.sp$sp1 %in% outgroup.taxa & !df.sp$sp2 %in% outgroup.taxa , ]
+  df.nr = filter.reciprocal(df.sp) # final non-redundant set of pairwise comparisons
+  
+  nr.dm = MCMC.samples
+  coal.mt = matrix(NA, ncol=nrow(df.nr), nrow=nr.dm)
+  colnames(coal.mt) <- paste(df.nr$sp1, df.nr$sp2, sep='_')
+  
+  for(i in 1:MCMC.samples)
+  {
+    for(n in 1:nrow(df.nr))
+    {
+      coal.mt[i, n] <- dist.list[[i]][as.character(df.nr[n,1]), as.character(df.nr[n,2])]
+    }
+  }
+  
+  coal.mt
+}
+
+
+read.BEAST.tree = function(tree.file.path, verbouse=F, burnin=100, random1000=F)
+{
+  print(tree.file.path)
+  tree.lines= readLines(tree.file.path)
+  
+  # getting number of taxa:
+  ntax = tree.lines[grep('^Begin taxa;', tree.lines)+1]
+  ntax = sub('\tDimensions ntax=', '', ntax)
+  ntax = as.numeric(sub(';', '', ntax))
+  if(verbouse) print(paste('Number of taxa:', ntax))
+  
+  # getting df with taxa number and names
+  tax.name.start = grep('^Begin trees;', tree.lines)+2
+  tax.id = tree.lines[tax.name.start:(tax.name.start+ntax-1)]
+  tax.df = ldply(strsplit(tax.id, '\t\t| |,'), function(i) data.frame(tax.no=i[2], tax.name=i[3]))
+  if(verbouse) print('Produced taxa table......\n......fixing BEAST tree')
+  # tree line manipulation and producing tree list with data to analyze
+  trees = tree.lines[grep('^tree ', tree.lines)][-c(1:(burnin))]   # remove shit before tree and burnin trees...
+  if(verbouse) print(paste('Removing', burnin, 'burnin trees.....'))
+  
+  if(random1000)
+  {
+    trees = trees[sample(length(trees), 1000)]
+    print(paste('Only using', length(trees), 'random MCMC samples'))
+  }
+  
+  trees.list = lapply(trees, function(tree)
+  {
+    BEASTtree <- unlist(strsplit(tree, '= \\[|\\] '))[4]  # split tree-string on rate info
+    BEASTtree.split = unlist(strsplit(BEASTtree, '\\[|\\]'))   # remove rate stuff drom trees
+    tre.data = BEASTtree.split[-grep('^\\&', BEASTtree.split)] # return clean tree
+    phy = read.tree(text=paste(tre.data, collapse='')) # read in phylo
+    phy$tip.label <- as.character(tax.df$tax.name[match(phy$tip.label, tax.df$tax.no)]) # change to species names
+    phy
+  })
+  
+  # make list of distance matrixes from trees
+  if(verbouse) print('Extracting node age distributions from all trees')
+  dist.list = lapply(trees.list, function(tree) { cophenetic.phylo(tree)/2 })
+  
+  # Get MCMC samples for each node in tree:
+  if(verbouse) print('Generating coalescent matrix for all pairwise taxa comparisons')
+  coal.matr = makeCoalMatrix(dist.list)
+  
+  # get lognormal parameters for each MCMC node sampling
+  #if(verbouse) print('Estimating lognormal distribution parameters')
+  #fitdistr.list = apply(coal.matr, 2, function(i) fitdistr(i, 'lognormal'))
+  #fitdistr.df = t(ldply(fitdistr.list, function(i) data.frame(meanlog=i$estimate[[1]], sdlog=i$estimate[[2]])))
+  
+  # output list with MCMC and fitdistr.esitimates
+  if(verbouse) print('Returning MCMC and fitdist estimates')
+  #list(node.distributions = coal.matr, fitdistr=fitdistr.df, trees=trees.list)
+  list(node.distributions = coal.matr, trees=trees.list)
+  # make summary-list of MCMC samples and their fitdist*lognormal parameters
+}
+
+beastOutPath = "/mnt/users/lagr/GRewd/codonAlignments/beastOut_singletonWithOs"
+
+treeFiles = dir(beastOutPath, pattern="trees", full.names = T)
+
+#TEST:  read in one tree
+t = read.BEAST.tree(treeFiles[1], verbouse = T)
+
+# read in all trees - takes time -
+collect.beast = lapply(treeFiles, function(treeFile) try(read.BEAST.tree(treeFile, verbouse = F, random1000=F), silent = T))
+# Change this below
+save(collect.beast, file = "/mnt/users/mariansc/BEAST_nodes_and_trees.RData")
+
+# make coal matrix:
+
+load('/mnt/users/mariansc/BEAST_nodes_and_trees.RData')
+require(plyr)
+coal.matr = ldply(collect.beast, function(i) { 
+          x = apply(i$node.distributions, 2, mean)
+          split.names = strsplit(names(x), '_')
+          new.names = sapply(split.names,function(i) paste(i[order(i)], collapse='_'))
+          names(x) = new.names
+          dat = x[order(names(x))]
+          print(names(dat))
+          dat
+          })
+
+# some plotting:
+# par(mfrow=c(4,1))
+# boxplot(list(Bd_Ns=coal.matr$Bd_Ns, Bd_Mn=coal.matr$Bd_Mn, Bd_Sl=coal.matr$Bd_Sl), ylab='MYA', xlab='MRCA nodes')
+# hist(coal.matr$Bd_Ns, 100, xlim=c(0,100), ylim=500)
+# hist(coal.matr$Bd_Ns, 100, xlim=c(0,100), ylim=500)
+# hist(coal.matr$Bd_Ns, 100, xlim=c(0,100), ylim=500)
+
+# some plotting:
+
+#OrdPairDist <- c("Bd_Hv", "Hv_Sl", "Bd_Sl", "Hv_Mn",  "Bd_Mn",  "Mn_Sl",  "Hv_Ns", "Bd_Ns", "Ns_Sl", "Mn_Ns")
+OrdPairDist <- c(1, 7, 4, 5, 2, 9, 6, 3, 10, 8)
+pdf(file="/mnt/users/mariansc/Pooid_Phylo/PooidNodeAges.pdf")
+par(mfrow=c(1,1))
+# raw ages
+boxplot(list(Bd_Hv=coal.matr$Bd_Hv, Hv_Sl=coal.matr$Hv_Sl, Bd_Sl=coal.matr$Bd_Sl, Hv_Mn=coal.matr$Hv_Mn, Bd_Mn=coal.matr$Bd_Mn, Mn_Sl=coal.matr$Mn_Sl, Hv_Ns=coal.matr$Hv_Ns, Bd_Ns=coal.matr$Bd_Ns, Ns_Sl=coal.matr$Ns_Sl, Mn_Ns=coal.matr$Mn_Ns), ylab='MYA', xlab='MRCA
+ nodes', main='Raw data')
+
+# normalized age to brachy
+boxplot(list(Bd_Hv=coal.matr$Bd_Hv-coal.matr$Bd_Hv, Hv_Sl=coal.matr$Hv_Sl-coal.matr$Bd_Hv, Bd_Sl=coal.matr$Bd_Sl-coal.matr$Bd_Hv, Hv_Mn=coal.matr$Hv_Mn-coal.matr$Bd_Hv, Bd_Mn=coal.matr$Bd_Mn-coal.matr$Bd_Hv, Mn_Sl=coal.matr$Mn_Sl-coal.matr$Bd_Hv, Hv_Ns=coal.matr$Hv_Ns-coal.matr$Bd_Hv, Bd_Ns=coal.matr$Bd_Ns-coal.matr$Bd_Hv, Ns_Sl=coal.matr$Ns_Sl-coal.matr$Bd_Hv, Mn_Ns=coal.matr$Mn_Ns-coal.matr$Bd_Hv), ylab='MYA prior to Bd-Hv', xlab='MRCA nodes', main='Normalized to Bd-Hv split')
+
+
+
+#Node age distribution
+par(mfrow=c(5,2))
+for (i in OrdPairDist){ 
+  print(i)
+  hist(coal.matr[[i]], 100, xlim=c(20,100), ylim=c(0,200), main=colnames(coal.matr[i]))
+  abline(v=mean(coal.matr[[i]]), col='red');
+  abline(v=median(coal.matr[[i]]), col='blue');
+  legend('topleft', fill=c('red', 'blue'), legend=c('Mean', 'Median'), bty='n');
+  }
+par(mfrow=c(2,1))
+for (i in OrdPairDist){ 
+  print(i)
+  hist(coal.matr[[i]], 100, xlim=c(20,100), ylim=c(0,200), xlab="MYA", main=paste(colnames(coal.matr[i]), "node age distribution", sep=" "))
+  abline(v=mean(coal.matr[[i]]), col='red');
+  abline(v=median(coal.matr[[i]]), col='blue');
+  legend('topleft', fill=c('red', 'blue'), legend=c('Mean', 'Median'), bty='n');
+  }
+dev.off()
+
+# 
+# hist(coal.matr$Bd_Sl, 100, xlim=c(20,100), ylim=c(0,200), main='Bd_Sl')
+# abline(v=mean(coal.matr$Bd_Sl), col='red');
+# abline(v=median(coal.matr$Bd_Sl), col='blue')
+# legend('topleft', fill=c('red', 'blue'), legend=c('Mean', 'Median'), bty='n')
+# 
+# hist(coal.matr$Bd_Mn, 100, xlim=c(20,100), ylim=c(0,200), main='Bd_Mn')
+# abline(v=mean(coal.matr$Bd_Mn), col='red');
+# abline(v=median(coal.matr$Bd_Mn), col='blue')
+# legend('topleft', fill=c('red', 'blue'), legend=c('Mean', 'Median'), bty='n')
+# 
+# hist(coal.matr$Bd_Ns, 100, xlim=c(20,100), ylim=c(0,200), main='Bd_Ns')
+# abline(v=mean(coal.matr$Bd_Ns), col='red');
+# abline(v=median(coal.matr$Bd_Ns), col='blue')
+# legend('topleft', fill=c('red', 'blue'), legend=c('Mean', 'Median'), bty='n')
+
+```
+

@@ -84,6 +84,43 @@ title( main="Significant negative ramp effect",
 
 ```
 
+## combined up/down peak/ramp
+```{r plotVenn2, echo=FALSE}
+# get grpIDs of significant genes
+lapply(c(ramp="resRamp",peak="resPeak"),function(eff){
+  lapply(setNames(names(DE),names(DE)), function(spc){
+    with(DE[[spc]][[eff]], {
+      padj<0.05 & abs(log2FoldChange)>1
+    }) -> sig
+    sig[is.na(sig)] <- F
+    
+    flatGrpIDs <- rep(rownames(grps),lens[ ,spc])
+    spcGeneIDs <- unlist(grps[,spc])
+    
+    sigGeneIDs <- rownames(DE[[spc]][[eff]])[sig]
+    sigGrpIDs <- flatGrpIDs[match(sigGeneIDs,spcGeneIDs)]
+    
+    return( unique(sigGrpIDs))
+  })
+}) -> sigGrpIds2
+
+
+sapply(c("BrDi","HoVu","NaSt","MeNu1","StLa"), function(spc){
+  union(sigGrpIds2$peak[[spc]],sigGrpIds2$ramp[[spc]])
+}) -> sigGrpsComb
+
+venn( data=sigGrpsComb[c("BrDi","HoVu","NaSt","MeNu1","StLa")])
+
+title( main="Significant peak/ramp up/down effect",
+       sub="adj.P < 0.05, |log2FC| > 1")
+
+venn( data=sigGrpsComb[c("BrDi","HoVu","NaSt","MeNu1")])
+
+title( main="Significant peak/ramp up/down effect",
+       sub="adj.P < 0.05, |log2FC| > 1")
+
+```
+
 ## Only groups from cold genes
 
 Note: there are 40 groups in the cold genes list

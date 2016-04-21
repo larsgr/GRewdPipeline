@@ -4,28 +4,164 @@ output: html_document
 ---
 
 
+```{r loadLibraries, echo=FALSE, message=FALSE}
+library(stringr)
+
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+```{r loadData, echo=FALSE}
+orthoPath <- "/mnt/NOBACKUP/mariansc/share/orthos"
+
+PAMLpath <- file.path(orthoPath,"PAML")
+
+dNdSallFile <- "~/GRewd/pipeline/data/dNdSall.RDS"
+
+
+# load good groups
+goodGrps <- loadOrthoGrpsArray(file.path(orthoPath,"splitGroups/goodGroups.txt"))
+
+goodLens <- sapply(goodGrps,length)
+dim(goodLens) <- dim(goodGrps)
+dimnames(goodLens) <- dimnames(goodGrps)
+
+# load the cold.loci.raw.sequences
+
+load("indata/Vigeland/nph12337-sup-0005-NotesS2.Rdata") 
+LTIseqIDs.Bd <- sub("bd_(Bradi[1-5]g[0-9\\.]+)_aliready.fasta","\\1",perl=T,
+                 names(cold.loci.raw.sequences))
+
+LTIgrpIDs <- seqIDtoGrpID(goodGrps,LTIseqIDs.Bd,"Bd_R")
+```
+
+```{r}
+vst <- readRDS("data/VSTnew.RDS")
+
+pamlRes <- readRDS("~/GRewd/pipeline/data/pamlRes.RDS") # from: pamlResultsOverview.Rmd
+
+# remove NA's in H4a (probably caused by trees where the core clade is on the root and can't be marked)
+pamlRes$H4a <- pamlRes$H4a[!is.na(pamlRes$H4a$pVal), ]
+
+# convert to matrix of p-values
+pamlMat <- sapply(pamlRes, with, {setNames(pVal[match(rownames(vst),grpID)],rownames(vst))})
+
+
+goodTrees <- readRDS("/mnt/NOBACKUP/mariansc/share/orthos/splitGroups/goodTrees.rds")
+
+library(ape)
+tree <- goodTrees[[names(which(is.na(pamlMat[ ,"H4a"]))[1])]]
+
+plot(tree)
+
+setwd("~/temp/doPAML")
+doPAML(tree,grpID = "grp100063.8",
+       codonAlnPath = "/mnt/NOBACKUP/mariansc/share/orthos/pal2nal",
+       outGrpDir = "~/temp/doPAML")
+rootedTree <- root(tree,grep("Os_R",tree$tip.label),resolve.root = T)
+plot(rootedTree)
+
+write.tree(rootedTree)
+"((((((Bd_R|Bradi4g39880.1:0.00223646215,BrDi|TR73117_c0_g1:0.003570010435)100:0.04830590624,(((LoPe|GAYX01036281:1e-08,LoPeF|f330_c0s1:1e-08)100:1e-08,LoPe|GAYX01036280:1e-08)100:0.04620816292,(HoVu|TR44432_c0_g1:0.0009860578314,Hv_R|AK368598:0.001343217302)100:0.05608667619)100:0.0135332982)100:0.00458445364,StLa|TR79610_c3_g1:0.01971949193)66:0.01141684283,MeNu1|TR25691_c0_g5:0.04500054233)100:0.01448899709,NaSt|TR100116_c0_g2:0.05693002677)100:0,Os_R|Os12g0230100:0.09009400485)Root;"
+```
+
+
+
 ```{r}
 
-# extract the dN/dS values
-PAMLpath <- "/mnt/NOBACKUP/mariansc/share/orthos/PAML"
-pamlResFiles <- dir(PAMLpath,pattern = "grp.*.out$",recursive = T,full.names = T)
-names(pamlResFiles) <- sub(".*/(grp[0-9\\.]+_.*).out","\\1", pamlResFiles,perl=T)
-grpIDs.pamlResFiles <- sub(".*/(grp[0-9\\.]+)_.*.out","\\1", pamlResFiles,perl=T)
-grpIDs.pamlResFiles[1:10]
-txt <- readLines(pamlResFiles[11])
+grpIDs <- sub("(grp[0-9\\.]+)_.*","\\1",perl=T,names(dNdSall))
 
-firstLine <- grep("Nei & Gojobori 1986. dN/dS",txt)+5
-lastLine <- firstLine + grep("^$",txt[firstLine:length(txt)])[1] - 2
-txtdNdS <- txt[firstLine:lastLine]
-seqIDs <- sub("^([^ ]+) .*","\\1",perl=T,txtdNdS)
+# select orthoGroups with at-least one Zm or Sb, at-least one Bd_r and Os_R
+idx <- which(rowSums(goodLens[grpIDs,c("Zm_R","Sb_R")])>0 & 
+               goodLens[grpIDs,c("Os_R")])
 
-numbers <- as.numeric(unlist(stringr::str_extract_all(txtdNdS,"-?[0-9]\\.[0-9]{4}")))
-lapply(c(dNdS=1,dN=2,dS=3),function(ofs){
-  m <- matrix(0,length(seqIDs),length(seqIDs),dimnames = list(seqIDs,seqIDs))
-  m[upper.tri(m)] <- numbers[seq(ofs,to = length(numbers),by=3)]
-  t(m)
-}) -> dNdSmat
+unlist(lapply(dNdSall[idx], function(dNdSmat){
+  m <- dNdSmat$dN
+  m[m==-1 | m > 0.5] <- NA # replace -1.000 with NA and discard dN > 0.5
+  m <- m+t(m) # make triangular matrix square
+  
+  i <- grep("Zm_R|Sb_R",rownames(m)) # we want distance from outgroups species
+  
+  # take mean of distance if several outgroup species exists
+  x <- colMeans(m[i,-i,drop=F], na.rm=T)
+  return(x)
+})) -> dN
 
-plot(hclust(as.dist(dNdSmat$dN)))
+unlist(lapply(dNdSall[idx], function(dNdSmat){
+  m <- dNdSmat$dS
+  m[m==-1 | m > 2] <- NA # replace -1.000 with NA and discard dS > 2
+  m <- m+t(m) # make triangular matrix square
+  
+  i <- grep("Zm_R|Sb_R",rownames(m)) # we want distance from outgroups species
+  
+  # take mean of distance if several outgroup species exists
+  x <- colMeans(m[i,-i,drop=F],na.rm = T)
+  return(x)
+})) -> dS
+
+
+spc <- sub(".*H4b_H1\\.(.*)\\|.*","\\1",perl=T,names(dN))
+
+boxplot(dN~spc,data.frame(dN = dN, spc = spc),outline=F)
+tapply(dN,spc,median,na.rm = T)
+
+boxplot(dS~spc,data.frame(dS = dS, spc = spc),outline=F)
+tapply(dS,spc,median,na.rm = T)
+
+dNdSmat <- dNdSall[[idx[1]]]
+
+
+unlist(lapply(dNdSall[idx], function(dNdSmat){
+  m <- dNdSmat$dN
+  m[m==-1 | m > 0.5] <- NA # replace -1.000 with NA and discard dN > 0.5
+  m <- m+t(m) # make triangular matrix square
+  
+  i <- grep("Zm_R|Sb_R",rownames(m)) # we want distance from outgroups species
+  
+  # take mean of distance if several outgroup species exists
+  x <- colMeans(m[i,-i,drop=F], na.rm=T)
+  
+  j <- grep("Os_R",names(x))
+  
+  return(x[-j]-mean(x[j]))
+})) -> dN_dNrice
+dNrel <- data.frame( dN_dNrice )
+dNrel$spc <- sub(".*H4b_H1\\.(.*)\\|.*","\\1",perl=T,names(dN_dNrice))
+dNrel$grpIDs <- sub("(grp[0-9\\.]+)_H4b_H1.*","\\1",perl=T,names(dN_dNrice))
+dNrel$isLTI <- dNrel$grpIDs %in% LTIgrpIDs
+
+boxplot(dN_dNrice~spc,dNrel,outline=F)
+tapply(dNrel$dN_dNrice,dNrel$spc,mean,na.rm = T) -
+tapply(dNrel$dN_dNrice[dNrel$isLTI],dNrel$spc[dNrel$isLTI],mean,na.rm = T)
+
+unlist(lapply(dNdSall[idx], function(dNdSmat){
+  m <- dNdSmat$dS
+  m[m==-1 | m > 2] <- NA # replace -1.000 with NA and discard dS > 2
+  m <- m+t(m) # make triangular matrix square
+  
+  i <- grep("Zm_R|Sb_R",rownames(m)) # we want distance from outgroups species
+  
+  # take mean of distance if several outgroup species exists
+  x <- colMeans(m[i,-i,drop=F], na.rm=T)
+  
+  j <- grep("Os_R",names(x))
+  
+  return(x[-j]-mean(x[j]))
+})) -> dS_dSrice
+dSrel <- data.frame( dS_dSrice )
+dSrel$spc <- sub(".*H4b_H1\\.(.*)\\|.*","\\1",perl=T,names(dS_dSrice))
+dSrel$grpIDs <- sub("(grp[0-9\\.]+)_H4b_H1.*","\\1",perl=T,names(dS_dSrice))
+dSrel$isLTI <- dSrel$grpIDs %in% LTIgrpIDs
+
+
+boxplot(dS_dSrice~spc,dSrel,outline=F)
+
+tapply(dSrel$dS_dSrice,dSrel$spc,mean,na.rm = T) -
+tapply(dSrel$dS_dSrice[dSrel$isLTI],dSrel$spc[dSrel$isLTI],mean,na.rm = T)
+
+
+```
+
+```{r}
+
 ```
 

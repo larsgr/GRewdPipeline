@@ -1,0 +1,90 @@
+---
+title: "StatsTable"
+output: html_document
+---
+
+### Goal
+
+Calculate some general stats to be presented as a table in paper 1.
+
+Table should have species as rows and the following columns:
+
+* Number of samples (perhaps at each timepoint)
+* Total number of reads
+* Number of assembled contigs
+* Number of coding sequences
+* Number of orthogroups
+* Number supergenes orthogroups
+
+(perhaps switch rows and columns to get more space for description)
+
+```{r loadLibraries, echo=FALSE, message=FALSE}
+library(DESeq2)
+
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+```{r getStats, echo=FALSE, cache=TRUE}
+
+expr <- readRDS(file = "~/GRewd/pipeline/data/superExprMatrix.RDS")
+sampleIDs <- colnames(expr)
+rm(expr)
+
+spcs <- c("HoVu","BrDi","MeNu1","StLa","NaSt")
+spcs <- setNames(spcs,spcs)
+
+sampleDesc <- read.table(text=sampleIDs,sep = ".",col.names = c("spc","timepoint","pooled","rep"))
+sampleDesc$sampleID <- sampleIDs
+
+# Get the read counts from the fastfq results...
+fqHtmlFiles <- dir("/mnt/NOBACKUP/mariansc/share/trimmo/fastqc_output",pattern = ".R1.fq_fastqc.html$",full.names = T)
+fqHtmlFiles <- setNames(fqHtmlFiles,sub("(.*).R1.fq_fastqc.html$","\\1",perl=T,basename(fqHtmlFiles)))
+fqHtmlFiles <- fqHtmlFiles[sampleIDs]
+sapply(fqHtmlFiles,function(fqHtmlFile){
+  suppressWarnings( x <- readLines(fqHtmlFile))
+  as.integer(sub(".*Total Sequences[^0-9]+([0-9]+).*","\\1",x[187],perl=T))
+}) -> sampleDesc$readCount
+
+
+# number of samples
+nSamples <- as.matrix(table(sampleDesc$spc))[,1]
+
+# total number of reads
+totReads <- tapply(sampleDesc$readCount,sampleDesc$spc,sum)
+
+# get number of contigs/transcripts assembled by trinity (no isoforms)
+fais <- dir("/mnt/NOBACKUP/mariansc/share/trinity",recursive = T, pattern="\\.fai$",full.names = T)
+fais <- file.path("/mnt/NOBACKUP/mariansc/share/trinity",spcs,paste0(spcs,".fasta.fai"))
+sapply(fais,function(fai){
+  length(unique(sub("_i[0-9]+$","",read.table(fai)$V1)))
+}) -> contigs
+contigs <- setNames(contigs,spcs)
+
+# get number of coding genes..
+orfDir <- "/mnt/NOBACKUP/mariansc/share/orthos/longestORFs"
+sapply(spcs,function(spc){
+  length(readLines(file.path(orfDir,paste0(spc,".tbl"))))
+}) -> nOrfs
+
+
+orthoPath <- "/mnt/NOBACKUP/mariansc/share/orthos"
+goodGrps <- loadOrthoGrpsArray(file.path(orthoPath,"splitGroups/goodGroups.txt"))
+grps <- loadOrthoGrpsArray(file.path(orthoPath,"orthoMCL/groups.txt"))
+
+nOrthoGrps <- colSums(!apply(grps[ ,spcs],2,sapply,is.null))
+nGoodOrthoGrps <- colSums(!apply(goodGrps[ ,spcs],2,sapply,is.null))
+
+statTable <- data.frame(nSamples,totReads,contigs,nOrfs,nOrthoGrps,nGoodOrthoGrps)
+```
+
+```{r showTable, echo=FALSE}
+library(knitr)
+kable(t(statTable))
+```
+
+```{r showTimpointSamples, echo=FALSE}
+kable(table(sampleDesc$spc,sampleDesc$timepoint))
+```
+
+
+

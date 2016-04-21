@@ -1,5 +1,5 @@
 ---
-title: "GO analysis using topGO"
+title: "GO analysis using Brachypodium Annotations"
 output:
   html_document:
     toc: yes
@@ -19,20 +19,13 @@ source("~/GRewd/pipeline/R/orthoGrpTools.R")
 
 
 ```{r loadGOannot, echo=FALSE}
-GOannotFile <- "/mnt/NOBACKUP/mariansc/share/refGenomes/barley_HighConf_genes_MIPS_23Mar12_IPROScan_GOs.txt"
-GOannotFileSource <- "ftp://ftpmips.helmholtz-muenchen.de/plants/barley/public_data/genes/barley_HighConf_genes_MIPS_23Mar12_IPROScan_GOs.txt"
-
-if(!file.exists(GOannotFile)){
-  download.file(GOannotFileSource, destfile=GOannotFile)
-}
+GOannotFile <- "~/GRewd/pipeline/indata/Bd_GO.mart_export.txt"
 
 # read GO annotations
-HvGOtbl <- read.table(GOannotFile,sep="\t", quote = "",
-                      col.names=c("geneID","GO"), stringsAsFactors=F)
-#not used:
-# # convert to gene2GO list
-# HvGene2GO <- split(HvGOtbl$GO,HvGOtbl$geneID)
+BdGOtbl <- read.table(GOannotFile,sep="\t", quote = "", stringsAsFactors=F,header = T)
 
+# convert to gene2GO list
+BdGene2GO <- split(BdGOtbl$GO.term.accession,BdGOtbl$Gene.stable.ID)
 ```
 
 ```{r getPlantSlimGOs, echo=FALSE}
@@ -58,16 +51,18 @@ superGrpIDs <- rownames(DEmat$peak$pVal)
 
 ```{r defGOFunctions, echo=FALSE}
 
-geneIDs2grpIDs <- function(geneIDs, spc, grps){
-  flatGrpIDs <- rep(rownames(grps),sapply(grps[ ,spc],length))
-  spcGeneIDs <- unlist(grps[,spc],use.names = F)
-      
-  flatGrpIDs[match(geneIDs,spcGeneIDs)]
+BRADIgeneIDs2grpIDs <- function(geneIDs, grps){
+  flatGrpIDs <- rep(rownames(grps),sapply(grps[ ,"Bd_R"],length))
+  spcGeneIDs <- unlist(grps[,"Bd_R"],use.names = F)
+
+  BRADIgeneIDs <- sub("\\.[0-9]+$","",toupper(spcGeneIDs))
+  flatGrpIDs[match(geneIDs,BRADIgeneIDs)]
 }
 
 # make grp2GO list
-HvGOtbl$grpID <- geneIDs2grpIDs(HvGOtbl$geneID,"Hv_R",goodGrps)
-grpID2GO <- lapply( split( HvGOtbl$GO, HvGOtbl$grpID ), unique )
+BdGOtbl$grpID <- BRADIgeneIDs2grpIDs(BdGOtbl$Gene.stable.ID,goodGrps)
+
+grpID2GO <- lapply( split( BdGOtbl$GO.term.accession, BdGOtbl$grpID ), unique )
 
 
 getGOterms <- function(GOids){
@@ -103,7 +98,7 @@ testGOgrps <- function(grpIDs, bkGrpIDs = NULL, ontology = "BP"){
   sink() # stop sinking output
   
 #   GenTable(GOdata, classic = classic.fisher, weight=weight.fisher,
-#            orderBy = "weight", ranksOf="classic", topNodes = 1111)
+#            orderBy = "classic", ranksOf="classic", topNodes = 10)
   tbl <- termStat(GOdata)
   tbl$pval.classic.fisher <- score(classic.fisher)[rownames(tbl)]
   tbl$pval.weight.fisher <- score(weight.fisher)[rownames(tbl)]
@@ -170,6 +165,7 @@ sapply( hSpcs2, function(branchSpcs){
 # run topGO on all branch and species specific DE genes
 
 apply(cbind(hSig,spcSig),2,function(sig){
+# apply(hSig,2,function(sig){
   testGOgrps(grpIDs = superGrpIDs[sig], bkGrpIDs = superGrpIDs)
 }) -> sigGO
 
@@ -307,6 +303,7 @@ runGOallHyp <- function(sigMat){
   # run topGO on all branch and species specific DE genes
   
   apply(cbind(hSig,spcSig),2,function(sig){
+#   apply(hSig,2,function(sig){
     testGOgrps(grpIDs = superGrpIDs[sig], bkGrpIDs = superGrpIDs)
   })
 }
@@ -379,7 +376,7 @@ text(x = rep(1:ncol(y),each=nrow(y)),y=y[,1:ncol(y)],labels = sigLabel,adj = 0)
 ### GO enrichment for species specific and clade specific DE genes
 
 
-```{r comboBarplot, echo=FALSE, fig.height=7,fig.width=12}
+```{r comboBarplot, echo=FALSE, fig.height=9,fig.width=14}
 
 # get all significantly enriched GO's (fisher P<0.05)
 
@@ -403,14 +400,17 @@ rownames(sigGOpvalmat) <- rownames(sigGOcomb[[1]])
 
 # GO's sorted by number of occurences in background
 sortedSigGOs <- names(sort(sigGOmat[combSigGOs,"all"],decreasing = T))
+# only keep GOs from plantSlim
 sortedSigGOs <- sortedSigGOs[sortedSigGOs %in% plantSlimGOs]
 
+# remove some specific GOs that are redundant
 redundantGOs <- c("GO:0008152","GO:0009058","GO:0007154","GO:0009875")
 sortedSigGOs <- sortedSigGOs[!(sortedSigGOs %in% redundantGOs)]
 
 # Give a color to each of the significant GO's
-GO2Col <- setNames(c(RColorBrewer::brewer.pal(n = 12,name = "Paired"),"white"),
-                   sortedSigGOs[1:13])
+GO2Col <- setNames(c(RColorBrewer::brewer.pal(n = 12,name = "Paired"),"white","black",
+                     RColorBrewer::brewer.pal(n = 8,name = "Dark2")),
+                   sortedSigGOs)
 
 idxSlim <- rownames(sigGOmat) %in% plantSlimGOs[!(plantSlimGOs %in% redundantGOs)]
 
@@ -432,18 +432,18 @@ cbind(
   gAnn = c(sapply(sigGOcomb, with, length(unique(unlist(strsplit(SigGrpIDs[idxSlim],","))))),NA),
   # count number of genes with significant annotations
   gSigAnn = c(sapply(sigGOcomb, with, length(unique(unlist(strsplit(SigGrpIDs[idxSigGO],","))))),
-              1211) # length(unique(unlist(GO2grpID[sortedSigGOs])))
+              NA) # length(unique(unlist(GO2grpID[sortedSigGOs])))
 )[colIdx,] -> colStats
 
 labs <- paste0(rownames(colStats),"(",colStats[,"nSigAnn"],"/",colStats[,"gSigAnn"],")")
 
 par(mar=c(8, 4, 4, 2) + 0.1)
 barplot(sigGOnormMat,col=GO2Col[sortedSigGOs],width=0.5, space=c(1,rep(c(1,1,2),8)),
-        las=2, xlim=c(0,47), ylab="Proportion of slim GO annotations",
+        las=2, xlim=c(0,50), ylab="Proportion of slim GO annotations",
         names.arg=labs)
 par(mar=c(5, 4, 4, 2) + 0.1)
-legend("right",legend = rev(getGOterms(sortedSigGOs)),
-       fill=rev(GO2Col))
+legend("topright",legend = rev(getGOterms(sortedSigGOs)),
+       fill=rev(GO2Col[sortedSigGOs]))
 # legend("right",legend = c("(div. GO's)",rev(getGOterms(sortedSigGOs[1:12]))),
 #        fill=c("white",rev(GO2Col)))
 
@@ -456,29 +456,96 @@ text(x = 0.2+rep(cumsum(c(1,rep(c(1,1,1.5),8)))[-25],each=nrow(y)),
 
 ```
 
+```{r comboBarplotNoSpcs, echo=FALSE, fig.height=9,fig.width=14}
+
+# get all significantly enriched GO's (fisher P<0.05)
+
+sigGOcomb <- c( sigGO,
+            setNames(sigGOup,paste0(names(sigGOup),"Up")),
+            setNames(sigGOdown,paste0(names(sigGOdown),"Down")))
+
+# remove H4e hypothesis
+sigGOcomb <- sigGOcomb[!grepl("^H4e",names(sigGOcomb))]
+
+# Keep only branch hypotheses
+sigGOcomb <- sigGOcomb[grepl("^H4",names(sigGOcomb))]
+
+
+combSigGOs <- unique(unlist(lapply(sigGOcomb,function(tbl){
+  rownames(tbl)[which(tbl$pval.classic.fisher<0.05)]  
+})))
+
+# make matrix with number of DE genes per GO
+sigGOmat <- cbind(sapply(sigGOcomb,with,Significant),all=sigGOcomb[[1]]$Annotated)
+rownames(sigGOmat) <- rownames(sigGOcomb[[1]])
+
+sigGOpvalmat <- cbind(sapply(sigGOcomb,with,pval.classic.fisher))
+rownames(sigGOpvalmat) <- rownames(sigGOcomb[[1]])
+
+# GO's sorted by number of occurences in background
+sortedSigGOs <- names(sort(sigGOmat[combSigGOs,"all"],decreasing = T))
+# only keep GOs from plantSlim
+sortedSigGOs <- sortedSigGOs[sortedSigGOs %in% plantSlimGOs]
+
+# remove some specific GOs that are redundant
+redundantGOs <- c("GO:0008152","GO:0009058","GO:0007154","GO:0009875")
+sortedSigGOs <- sortedSigGOs[!(sortedSigGOs %in% redundantGOs)]
+
+# Give a color to each of the significant GO's
+GO2Col <- setNames(c(RColorBrewer::brewer.pal(n = 12,name = "Paired"),"white","black",
+                     RColorBrewer::brewer.pal(n = 8,name = "Dark2")),
+                   sortedSigGOs)
+
+idxSlim <- rownames(sigGOmat) %in% plantSlimGOs[!(plantSlimGOs %in% redundantGOs)]
+
+
+sigGOnormMat <- t(apply(sigGOmat[sortedSigGOs,],1,"/",colSums(sigGOmat[idxSlim, ])))
+
+
+# reorder columns
+colIdx <- c(as.vector(t(matrix(1:(ncol(sigGOnormMat)-1),ncol=3))),ncol(sigGOnormMat))
+sigGOnormMat <- sigGOnormMat[,colIdx]
+
+idxSigGO <- rownames(sigGOmat)%in%sortedSigGOs
+cbind(
+  # total number of annotations
+  nAnn = colSums(sigGOmat[idxSlim, ]),
+  # total number of significant annotations
+  nSigAnn = colSums(sigGOmat[idxSigGO, ]),
+  # count number of genes with annotations
+  gAnn = c(sapply(sigGOcomb, with, length(unique(unlist(strsplit(SigGrpIDs[idxSlim],","))))),NA),
+  # count number of genes with significant annotations
+  gSigAnn = c(sapply(sigGOcomb, with, length(unique(unlist(strsplit(SigGrpIDs[idxSigGO],","))))),
+              NA) # length(unique(unlist(GO2grpID[sortedSigGOs])))
+)[colIdx,] -> colStats
+
+labs <- paste0(rownames(colStats),"(",colStats[,"nSigAnn"],"/",colStats[,"gSigAnn"],")")
+
+par(mar=c(8, 4, 4, 2) + 0.1)
+barplot(sigGOnormMat,col=GO2Col[sortedSigGOs],width=0.5, space=c(1,rep(c(1,1,2),3)),
+        las=2, xlim=c(0,40), ylab="Proportion of slim GO annotations",
+        names.arg=labs)
+par(mar=c(5, 4, 4, 2) + 0.1)
+legend("topright",legend = rev(getGOterms(sortedSigGOs)),
+       fill=rev(GO2Col[sortedSigGOs]))
+# legend("right",legend = c("(div. GO's)",rev(getGOterms(sortedSigGOs[1:12]))),
+#        fill=c("white",rev(GO2Col)))
+
+y <- apply(sigGOnormMat,2,function(x){cumsum(x)-x/2})[,-ncol(sigGOnormMat)]
+pval <- sigGOpvalmat[rownames(sigGOnormMat),colIdx[-ncol(sigGOnormMat)]]
+sigLabel <- cut(pval,c(0,0.005,0.01,0.05,1),labels=c("***","**","*",""))
+
+text(x = 0.2+rep(cumsum(c(1,rep(c(1,1,1.5),3)))[-ncol(sigGOnormMat)],each=nrow(y)),
+     y=y[,1:ncol(y)],labels = sigLabel,adj = 0.5,srt=90)
+
+```
+
+
 GO annotations were slimmed using plantSlim to reduce the number annotations to more general terms. In adddition, four more GOs were removed to reduce redundancy. Only the biological process GOs were considered. The barplot shows the GOs that were significantly enriched in at least one of the DE gene sets (Fisher's exact test, P<0.05). The height of the bars reflects the number of annotations in each DE gene set as the proportion of the total number of annotations in the same gene set. As a reference the rightmost bar shows the proportion of GO annotations for all genes.
 
 In paranthesis are the number of annotations and corresponding number of genes (Note that there can be several annotations per gene) that are among the GOs shown in the barplot.
 
 The number of stars next to a bar in the plot reflects the P-value of the corresponding GO enrichment test (1: P<0.05, 2: P<0.01, 3: P<0.005).
-
-### Comments on the enriched GOs
-
-#### Response to stress
-
-Enriched in the the genes that are DE in only BrDi and HoVu (H4b). Eight genes with various functions related to stress response (Peroxidase, DNA repair, chaperone). A mix of up and down regulation in either peak or ramp. It is hard to draw any conclusions.
-
-#### Cellular homeostasis
-
-Enriched in the the genes that are DE in all but NaSt (H4d). Four genes (Thioredoxin related?). Response in NaSt similar to MeNu so the H4d, i.e. the H4d classification seems conincidental. No conclusion.
-
-#### Signal transduction
-
-Enriched in all pooids (H4a, 5 genes) and all except NaSt (H4d, 4 genes). Both peak and ramp response.
-
-Signal transduction genes that have a cold-response in all pooids are potential master regulators of any downstream responses. 
-
-One of the H4aUp genes is annotated "Diacylglycerol kinase 1" (DGK). DGK has been implicated in cold stress response in arabidopsis http://www.ncbi.nlm.nih.gov/pubmed/23346092 
 
 
 ```{r deadCode, echo=FALSE, eval=FALSE}

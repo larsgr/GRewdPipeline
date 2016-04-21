@@ -1,0 +1,491 @@
+---
+title: "FigureDE"
+output: html_document
+---
+
+### Goal of analysis
+
+Present an overview of the results of the DE analysis to be used for the article. Proposed figures:
+
+* Venn diagram of DEGs using unfiltered orthoGrps
+* Venn diagram of DEGs using filtered supergenes
+* Matrix (heatmap) of pairwise shared DEGs
+
+We want to explain that the overlap of DEGs is to small to make predictions about individual genes (too many false positives)...
+
+Hypothesis1: Controlled up/down regulation of certain genes in response to cold treatment is a conserved trait that have evolved in pooids as they adapted to cold climates.
+
+Assumption: up/down regulation in response to cold treatment is based on the genome sequence and therefore changes gradually as mutations accumulate.
+
+
+Hypothesis2: Closely related species have more similar response than distant species
+
+
+We observe a large number of genes that respond to cold treatment in each of the five species, but it is mostly not the same/orthologous genes.
+
+We also observe that the DE overlap between the closest species is not higher than the overlap between more distantly related species.
+
+Both observations indicates that the species are so distantly related that regulation conserved by neutral selection is nearly non-existant.
+
+It also indicates that the number of conserved regulated genes for hypothesis1 is relatively low, and drowns in the larger number of seemingly random cold-regulated genes.
+
+However, there is a significant overlap of DE genes compared to what would be expected if there was no correlation in the gene regulation.
+
+Beware that there could be some technical correlation between the genes emerging from the supergenes method were variance is assumed equal accros species. There could also be bias from the absolute expression conserved accross species, i.e. lowly expressed genes are less likely to be DE.
+
+
+Obviously, gene regulation is a vital part of cold-acclimation. 
+
+Hypothesis0: Changes in gene regulation in response to cold has been a part of cold-adaptation in pooids. 
+Alternatively the genes already had the correct regulation and that cold-adaption was facilitated by..
+Hypothesis0.Alt1:  aqcuiring novel genes
+Hypothesis0.Alt2:  new functions of already existing genes
+Hypothesis0.Alt3:  changes in gene expression that is not affected by cold-treatment
+
+Probably the truth is a mix of all alternatives. But let's assume that for atleast some genes, hypothesis0 holds.
+
+We wanted to study this process. One question was if the changes mainly occured in the pooid predecesor or if it was a gradual process where each line developed their own mechanism.
+
+Hypothesis3: The necessary changes in gene regulation occured in the base of pooids, hence the cold-response in cold-acclimation genes are equal in all pooids.
+Hypothesis3.alt1: Each pooid have evolved some degree of individual adaptive cold-response.
+
+Hypothesis4: Core pooids are specifically well adapted to cold by novel cold-response.
+
+Is it possible to confirm/reject any of these hyptheses?
+
+For hyp0 we can observe that there are cold-responsive genes. Those that are cold-responsive in all species are more likely to be truly cold-responsive and supports hyp3, although we can't know if the response was there prior to pooids. Another disadvantage is the inherent correlation in the gene expression between the species which makes it possible that we detect non-functional cold-response that have been preserved by neutral selection.
+
+
+There are lots of differences but there are some similarities as well.........
+
+Hypothesis5: Dynamic gene regulation evolve so quickly that any similarity in response have dissapeared since the pooids split from each other.
+
+There is no noticable correlation between species phylogeny and expression profiles similarity.
+
+Possible causes: 
+* Technical batch effects are greater than biological effects
+* Species specific diurnal and aging effects are greater..
+
+If the cold-response is vital it will be conserved!
+
+
+
+
+```{r loadLibraries, echo=F, message=F}
+library(DESeq2)
+# library(gplots)
+library(VennDiagram)
+library(ape)
+library(phangorn)
+
+
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+
+
+```{r loadData, echo=FALSE}
+orthoPath <- "/mnt/NOBACKUP/mariansc/share/orthos"
+
+
+# load DEmat based based on superGenes
+DEmat <- readRDS("~/GRewd/pipeline/data/DEmat.RDS")  # from: superGeneModel.Rmd
+
+# load DE results
+load("/mnt/NOBACKUP/mariansc/share/orthos/DESeq/DE.RData")
+
+# load groups
+grps <- loadOrthoGrpsArray(file.path(orthoPath,"orthoMCL/groups.txt"))
+
+lens <- sapply(grps,length)
+dim(lens) <- dim(grps)
+dimnames(lens) <- dimnames(grps)
+
+# Species names to show in plots
+spcID2spcName <- c( BrDi="Brachypodium", HoVu="Hordeum", MeNu1="Melica", StLa="Stipa", NaSt="Nardus")
+
+# define species colors to use in plots
+spcColors <- c( Nardus = "#0049dbff",
+                Stipa = "#ff0000ff",
+                Melica = "#cd28e3ff",
+                Brachypodium = "#00c500ff",
+                Hordeum = "#ff7e00ff")
+```
+
+### Venn plot for DE genes
+
+```{r defVennFun, echo=FALSE}
+pooidVennPlot <- function(grpIdsList){
+  # convert list of grpIds to matrix of logicals
+  allIDs <- unique(unlist(grpIdsList))
+  m <- sapply(grpIdsList, function(grpIds) allIDs %in% grpIds)
+  
+  venn5areas <- c("area1", "area2", "area3", "area4", "area5", "n12", "n13", 
+          "n14", "n15", "n23", "n24", "n25", "n34", "n35", "n45", "n123", 
+          "n124", "n125", "n134", "n135", "n145", "n234", "n235", "n245", 
+          "n345", "n1234", "n1235", "n1245", "n1345", "n2345", "n12345")
+  
+  
+  # calculate all overlap areas for the venn diagram
+  vennArgs <- lapply(setNames(sub("[^1-9]*","",venn5areas),venn5areas), function(x){
+    sum(apply(m[ ,as.integer(strsplit(x,"")[[1]]),drop=F],1,all))
+  })
+  
+  # convert to readable names
+  spcNames <- spcID2spcName[colnames(m)]
+  
+  # mix colors with white
+  spcColorsWht <- sapply(spcColors,function(col) {colorRampPalette(c(col,"white"))(10)[4]})
+  
+  # draw venn diagram
+  grid.newpage()
+  
+  do.call(draw.quintuple.venn, args=c( as.list(vennArgs) ,list(
+    scaled = F,category=spcNames,fill=spcColorsWht[spcNames],margin = 0.05,
+    cex = c(1.5, 1.5, 1.5, 1.5, 1.5, 1, 0.8, 1, 0.8, 1, 0.8, 1, 0.8, 1, 0.8, 
+    1, 0.7, 1, 0.7, 1, 0.7, 1, 0.7, 1, 0.7, 1, 1, 1, 1, 1, 1.5),
+    cat.pos = c(0, 340, 215, 145, 20),
+    cat.fontfamily = "",
+    cat.fontface = "italic",
+    fontfamily = "",
+    ind = T)))  
+}
+```
+
+
+```{r plotVenn, echo=FALSE}
+# get grpIDs of significant genes
+lapply(c(ramp="resRamp",peak="resPeak"),function(eff){
+  lapply(c(up=1,down=-1),function(direction){
+    lapply(setNames(names(DE),names(DE)), function(spc){
+      with(DE[[spc]][[eff]], {
+        (padj<0.05) * sign(log2FoldChange) * (abs(log2FoldChange)>1)
+      }) -> sig
+      sig[is.na(sig)] <- 0
+      
+      flatGrpIDs <- rep(rownames(grps),lens[ ,spc])
+      spcGeneIDs <- unlist(grps[,spc])
+      
+      sigGeneIDs <- rownames(DE[[spc]][[eff]])[sig==direction]
+      sigGrpIDs <- flatGrpIDs[match(sigGeneIDs,spcGeneIDs)]
+      
+      return( unique(sigGrpIDs))
+    })
+  }) 
+}) -> sigGrpIds
+
+spcs <- c("BrDi", "HoVu", "MeNu1", "StLa", "NaSt")
+spcs <- setNames(spcs,spcs)
+
+# combine ramp, peak, up and down by taking the union
+lapply(spcs, function(spc){
+  union(union(sigGrpIds$peak$up[[spc]],sigGrpIds$peak$down[[spc]]),
+        union(sigGrpIds$ramp$up[[spc]],sigGrpIds$ramp$down[[spc]]))
+}) -> combSigGrpIds
+
+
+# venn( data=combSigGrpIds)
+# title(main="All orthoGrps significant peak or ramp (up or down)",
+#       sub="p.adj<0.05 & |lfc|>1")
+invisible(pooidVennPlot(combSigGrpIds))
+```
+
+
+### Venn plot for DE supergenes
+
+```{r superVennPlot, echo=FALSE,dev='svg',fig.height=5,fig.width=6}
+# Get significant genes for peak and ramp (NA values equals not significant)
+sigMatUpDown <- lapply(DEmat, with, { ifelse(is.na(pAdj), F, pAdj < 0.05 & abs(lfc) > 1) })
+# Combine peak and ramp (significant if significant in either peak or ramp)
+combSigMat <- sigMatUpDown$peak | sigMatUpDown$ramp
+
+# plot Venn diagram
+# venn(apply(combSigMat,2,which))
+# title(main="Supergenes significant peak or ramp (up or down)",sub="p.adj<0.05 & |lfc|>1")
+
+svg(filename = "~/GRewd/pipeline/articleFigures/FigureDE_venn.svg",
+    width = 6, height = 5)
+invisible(pooidVennPlot(apply(combSigMat,2,which)))
+invisible(dev.off())
+invisible(pooidVennPlot(apply(combSigMat,2,which)))
+
+```
+
+### Pairwise overlapping DE matrix
+
+```{r pairwiseMatrix, echo=FALSE,dev='svg',fig.height=5,fig.width=4}
+
+plotPairwiseCommonDEGs <- function(combSigMat){
+  apply(combSigMat,2,function(x){
+    apply(combSigMat,2,function(y){
+      sum(x & y)
+    })
+  }) -> mSum
+  
+  apply(combSigMat,2,function(x){
+    apply(combSigMat,2,function(y){
+      sum(x | y)
+    })
+  }) -> mUnionSum
+  
+  m <- mSum/nrow(combSigMat)
+  
+  labelMat = mSum
+  
+  
+  ## odds ratio
+  AB <- mSum
+  ab <- nrow(combSigMat)-mUnionSum
+  Ab <- matrix(diag(mSum),nrow = nrow(mSum),ncol = ncol(mSum), byrow=F)-AB
+  aB <- matrix(diag(mSum),nrow = nrow(mSum),ncol = ncol(mSum), byrow=T)-AB
+  valueMat = (ab*AB)/(Ab*aB)
+  
+  
+  valRange <- range(pretty(valueMat[lower.tri(valueMat)]))
+#   valColors <- colorRampPalette(c("#FFEDA0","#FEB24C","#F03B20"))(100)
+  valColors <- colorRampPalette(RColorBrewer::brewer.pal(7,"YlGnBu")[1:5])(100)
+  valBreaks <- seq(valRange[1],valRange[2],length.out = 101)
+  
+  colorMat = matrix( cut(valueMat, labels=valColors, breaks=valBreaks), nrow=nrow(valueMat))
+  
+  n <- ncol(valueMat)
+  
+  layout(mat = matrix(1:2,ncol=1),heights = c(3,1))
+  par(mar=c(0,1,2,1)+0.1)
+  plot.new()
+  plot.window( xlim=c(-5,n), ylim=c(-0.5,2*n-1.5), asp=1 )
+  x=c(-1,0,1,0);y=c(0,1,0,-1)
+  for(i in 1:n){
+    for(j in 1:i){
+      cellCenterX <- i-j
+      cellCenterY <- 2*n - (i+j)
+      if(i != j){
+        polygon(x = cellCenterX+x, cellCenterY+y,border = "black",col = colorMat[i,j])
+  #       text(x = cellCenterX, y = cellCenterY-0.4, labels = expectMat[i,j],cex=0.8)
+      }
+      text(x = cellCenterX, y = cellCenterY, labels = labelMat[i,j])
+    }
+  }
+
+  # plot species names in italic
+  for(i in 1:n){
+    text(x = -1, y = 2*(n-i),adj = c(1,0.5), 
+         labels = substitute(italic(s),list(s=spcID2spcName[colnames(labelMat)][i])))
+  }
+  
+  title(main="Pairwise intersect of DEGs")
+
+  par(mar=c(4,6,1,6)+0.1)
+  image(x = valBreaks,z = matrix(valBreaks,ncol=1),col=valColors,
+        yaxt = "n", xlab="odds ratio",)
+
+  par(mar=c(5, 4, 4, 2) + 0.1)
+  layout(1)
+
+  
+}  
+
+svg(filename = "~/GRewd/pipeline/articleFigures/FigureDE_pairwise.svg",
+    width = 4, height = 5)
+plotPairwiseCommonDEGs(combSigMat)
+invisible(dev.off())
+plotPairwiseCommonDEGs(combSigMat)
+```
+
+
+```{r loadVST, echo=FALSE}
+# get vst data and make sample description table
+
+vst <- readRDS("~/GRewd/pipeline/data/VSTnew.RDS")
+sampleDesc <- read.table(text=colnames(vst),sep=".",col.names=c("spc","timepoint","pooled","rep"))
+sampleDesc$spcColor <- spcColors[spcID2spcName[sampleDesc$spc]]
+sampleDesc$spcName <- spcID2spcName[sampleDesc$spc]
+sampleDesc$timePch <- c("-",1,2,3,4)[sampleDesc$timepoint]
+sampleDesc$timeColor <- RColorBrewer::brewer.pal(11,"Spectral")[c(1,4,7,9,11)][sampleDesc$timepoint]
+```
+
+
+```{r heatmaps, echo=FALSE, dev='svg',fig.height=12,fig.width=12}
+#########
+#
+# Heatmaps
+#
+col <- colorRampPalette(RColorBrewer::brewer.pal(11,"Spectral"))(256)
+
+heatmap(cor(vst),scale="none",col=col,
+        ColSideColors = sampleDesc$spcColor,RowSideColors = sampleDesc$timeColor)
+
+# subtract average expression per species
+Reduce(cbind, sapply(unique(sampleDesc$spc),function(spc){
+  t(scale(t(vst[,sampleDesc$spc==spc]),scale = F,center = T))
+})) + rowMeans(vst) -> x
+
+heatmap(cor(x),scale="none",col=col,
+        ColSideColors = sampleDesc$spcColor,RowSideColors = sampleDesc$timeColor)
+
+```
+
+```{r variance, echo=FALSE}
+#####
+#
+# variance
+#
+
+t(apply(x,1,tapply,sampleDesc$timepoint,var)) -> varPerTimepoint
+boxplot(log10(varPerTimepoint),ylab="log10(variance at each timepoint)")
+
+```
+
+### Gene expression trees
+
+```{r bigSampleTree, echo=FALSE, fig.height=4,fig.width=7}
+# set filter for low expressed genes
+filterLowExpr <- apply(vst>3,1,all)
+
+z <- vst[filterLowExpr, ]
+dm <- dist(t(z),method = "manhattan")
+tree <- NJ(dm)
+
+tree <- rotate(rotate(rotate(rotateConstr(tree, tree$tip.label),node=75),node=76),node=77)
+
+# plot.phylo(tree2, show.tip.label = F, type= "u")
+# tiplabels( pch=sub(".*T(.).*","\\1",tree2$tip.label,perl=T), col=spcColors[match(substr(tree2$tip.label,1,1),substr(names(spcColors),1,1))])
+# nodelabels(frame = "none")
+
+
+
+
+par(mar=c(1,1,1,1))
+plot.phylo(tree, type="u",#show.tip.label = F,
+             tip.color=spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))],
+             ,cex = 1)
+
+svg(filename = "~/GRewd/pipeline/articleFigures/FigureDE_sampleTree.svg",
+    width = 7,height = 4)
+par(mar=c(1,1,1,1))
+plot.phylo(tree, type="u",#show.tip.label = F,
+             tip.color=spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))],
+             ,cex = 0.4)
+# tiplabels(pch=sub(".*T(.).*","\\1",tree$tip.label,perl=T),col = spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))])
+dev.off()
+par(mar=c(5, 4, 4, 2) + 0.1)
+
+```
+
+
+```{r exprTrees2, echo=FALSE}
+#
+# Distance...
+
+
+lapply(setNames(levels(sampleDesc$timepoint),levels(sampleDesc$timepoint)),function(timepoint){
+  sampleIdx <- sampleDesc$timepoint==timepoint
+  zDesc <- sampleDesc[sampleIdx,]
+  z <- vst[filterLowExpr,sampleIdx]
+  z <- cbind(z,root=sample(z[,1]))
+  
+  dm <- dist(t(z))
+  tree <- NJ(dm)
+  tree <- root(tree,outgroup = "root",resolve.root = T)
+  tree <- drop.tip(tree, "root")
+  return(tree)
+}) -> trees
+
+layout(mat = matrix(1:5,nrow=1),widths = sapply(trees, function(tree) length(tree$tip.label)))
+par(mar=c(5.1, 0.5, 4.1, 0.5))
+for( timepoint in names(trees)){
+  tree <- trees[[timepoint]]
+  plot.phylo(tree,y.lim=c(0,100), 
+             tip.color=spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))],
+             direction = "downwards",main=timepoint,cex = 1)
+               
+}
+par(mar=c(5, 4, 4, 2) + 0.1)
+layout(1)
+```
+
+
+```{r testPLS, echo=FALSE, eval=FALSE}
+###
+#
+# Test PLS
+#
+
+library(plsdepot)
+# data(vehicles)
+# y=vehicles[, "price",drop=FALSE]
+# x=vehicles[, -match("price",names(vehicles))]
+
+y <- (sampleDesc$spc=="HoVu") - (sampleDesc$spc=="BrDi")
+y <- sapply(unique(sampleDesc$spc), function(spc){as.integer(sampleDesc$spc==spc)})
+x <- t(vst)
+system.time(pls1 <- plsreg2(predictors = x, response = y, comps = 5))
+
+dim(pls1$x.scores)
+dim(pls1$x.loads)
+
+heatmap(pls1$y.scores,scale="none",labRow = sampleDesc$spc)
+heatmap(x %*% pls1$x.loads,scale="none",labRow = sampleDesc$spc)
+dim(x)
+
+points(pls1$cor.xyt[,1],pls1$cor.xyt[,2])
+plot(y,pls1$y.pred)
+plot(pls1)
+heatmap(pls1$mod.wgs,scale="none")
+dim(pls1$mod.wgs)
+```
+
+
+```{r, echo=FALSE, eval=FALSE}
+### Compare with the Priest article modules
+
+moduleFilesPath <- "/mnt/users/lagr/GRewd/pipeline/indata/BrachyStressModules"
+
+# load geneIDs from the article
+moduleFiles <- dir(moduleFilesPath,pattern="csv$",full.names = T)
+names(moduleFiles) <- sub("\\.csv","",basename(moduleFiles))
+
+
+lapply(moduleFiles, function(fil){
+  read.csv(fil,stringsAsFactors=F)[,1]
+}) -> moduleGeneIDs
+
+# load goodDroups
+goodGrps <- loadOrthoGrpsArray(file.path(orthoPath,"splitGroups","goodGroups.txt"))
+
+# map the module geneIDs to grpIDs
+noIsoBdRgenes <- sub("\\.[0-9]+$","",unlist(goodGrps[,"Bd_R"]))
+grpsFlatBdR <- rep(rownames(goodGrps),sapply(goodGrps[,"Bd_R"],length))
+
+lapply(moduleGeneIDs, function(geneIDs){
+  ret <- grpsFlatBdR[match(geneIDs,noIsoBdRgenes)]
+  return(unique(ret[!is.na(ret)]))
+}) -> moduleGrpIDs
+
+
+coldResponseGenes <- unlist(moduleGrpIDs[c("Module 18","Module 21")])
+
+```
+
+```{r, echo=FALSE, eval=FALSE}
+expr <- readRDS("~/GRewd/pipeline/data/superExprMatrix.RDS")
+
+sapply(moduleGrpIDs, function(grpIDs){
+  colMeans(expr[ grpIDs[grpIDs %in% rownames(expr)],])
+}) -> modExpr
+
+heatmap(log2(1+modExpr),scale = "none")
+
+sampleDesc <- read.table(text=colnames(expr),sep=".", col.names=c("spc","time","pool","rep"))
+
+sapply(tapply(rownames(modExpr),paste(sampleDesc$spc,sampleDesc$time,sep="."),function(x)x),
+       function(rowIdx){
+  colMeans(modExpr[rowIdx, ,drop=F])
+}) -> modExprMeans
+
+heatmap(log2(1+modExprMeans), scale="none")
+
+
+
+```
+

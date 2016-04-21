@@ -1,0 +1,18 @@
+XML-fil for Marian & Lars 151202
+
+priorer:
+calibrations (ex Marcussen, Sandve, Heier et al. 2014):
+	tmrca(Bd,Hv) = normal(44.4,3.53)
+	tmrca alle (treeModel.rootheight) = normal(76.1,5)
+	tmrca(Ns,Sl,Mn,Bd,Hv) = monophyletic
+substitution model = HKY+G
+clock = uncorrelated lognormal (ucld)
+clock rate (ucld.mean) = uniform(0,0.01)
+tree = Yule (birth-only)
+MCMC = 10 mill generations, sample to log/tree every 10000.
+
+Instructions:
+In file replace sequences ("NNNNNNNNNNNNNNNNNNN").
+In file replace gene name ("dummy").
+Replace file name ("dummy") with gene name.
+
