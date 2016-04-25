@@ -53,6 +53,9 @@ paralogsWithAllOut <- goodTreeStats$allSpcAreClans & goodTreeStats$isCoreClan &
 2. Exactly one sequence in NaSt, StLa, MeNu, Bd_R, Hv_R, Os_R, Sb_R and Zm_R (`r sum(singletonWithAllOut)`)
 3. At least one sequence in NaSt, StLa, MeNu, Bd_R, Hv_R, Os_R, Sb_R and Zm_R (`r sum(paralogsWithAllOut)`). Resolve the paralogs by selecting the first (random?) paralog only.
 
+### Adding trees withouth core/basal split
+It was found that filtering on core/basal split existance could bias the estimated species tree. Therefore we added the this groups that also holds the condition in alternative 1 above (`r sum(singletonWithOsNoCoreClan)`)
+
 
 ### Extract codon alignments
 
@@ -60,24 +63,26 @@ paralogsWithAllOut <- goodTreeStats$allSpcAreClans & goodTreeStats$isCoreClan &
 * Change the sequence ID's to two letter species ID (Ns, Sl, Mn, Bd, Hv...)
 
 ```{r defFuns, echo=FALSE}
-# Read fasta file as named character vector
-readFasta <- function(inFastaFile){
-  # read fasta file
-  txt.fasta <- readLines(inFastaFile)
-  # convert to into named character vector
-  headerLines <- grepl("^>",txt.fasta)
-  seqIDs <- sub("^>","",txt.fasta[headerLines]) # OBS assumes only seqID on header
-  seqs <- tapply(txt.fasta[!headerLines],
-                 seqIDs[cumsum(headerLines)[!headerLines]],
-                 paste,collapse="")
-  return(seqs)
-}
+source("~/GRewd/pipeline/R/myFastaTools.R")
 
-# Write named character vector as fasta file
-writeFasta <- function(seqs,outFastaFile){
-  write(paste0(">",names(seqs),"\n",seqs,collapse = "\n"), 
-        file = outFastaFile )
-}
+# # Read fasta file as named character vector
+# readFasta <- function(inFastaFile){
+#   # read fasta file
+#   txt.fasta <- readLines(inFastaFile)
+#   # convert to into named character vector
+#   headerLines <- grepl("^>",txt.fasta)
+#   seqIDs <- sub("^>","",txt.fasta[headerLines]) # OBS assumes only seqID on header
+#   seqs <- tapply(txt.fasta[!headerLines],
+#                  seqIDs[cumsum(headerLines)[!headerLines]],
+#                  paste,collapse="")
+#   return(seqs)
+# }
+# 
+# # Write named character vector as fasta file
+# writeFasta <- function(seqs,outFastaFile){
+#   write(paste0(">",names(seqs),"\n",seqs,collapse = "\n"), 
+#         file = outFastaFile )
+# }
 
 # remove columns with gaps in all sequences
 removeGapInAll <- function(seqs){
@@ -166,6 +171,18 @@ for( grpID in rownames(goodGrps)[ paralogsWithAllOut]){
                    } )
 }
 
+##### singletonWithOsNoCoreClan
+
+outFastaPath <- "~/GRewd/codonAlignments/singletonWithOsNoCoreClan"
+dir.create(outFastaPath,recursive = T)
+
+for( grpID in rownames(goodGrps)[singletonWithOsNoCoreClan]){
+  extractSeqFasta( grpID, outFastaPath = outFastaPath,
+                   selectSeqFun = function(seqIDs){
+                     grepl(paste0("^",spcWithOs,collapse="|"),seqIDs)
+                   } )
+}
+
 
 ```
 
@@ -175,8 +192,10 @@ for( grpID in rownames(goodGrps)[ paralogsWithAllOut]){
 
 beastTemplate <- readLines('~/GRewd/pipeline/indata/BeastTemplate/dummy.txt')
 
-inFastaPath <- "~/GRewd/codonAlignments/singletonWithOs"
-outBeastPath <- "~/GRewd/codonAlignments/beast_singletonWithOs"
+# inFastaPath <- "~/GRewd/codonAlignments/singletonWithOs"
+# outBeastPath <- "~/GRewd/codonAlignments/beast_singletonWithOs"
+inFastaPath <- "~/GRewd/codonAlignments/singletonWithOsNoCoreClan"
+outBeastPath <- "~/GRewd/codonAlignments/beast_singletonWithOsNoCoreClan"
 dir.create(outBeastPath)
 
 fastaFiles <- dir(inFastaPath, full.names = T)
@@ -213,7 +232,8 @@ for(fastaFile in fastaFiles){
 ```{r runBeast, echo=FALSE, eval=FALSE}
 source("processes/SLURMscript/createSLURMscript.R")
 
-beastWorkDir <- "~/GRewd/codonAlignments/beastOut_singletonWithOs"
+# beastWorkDir <- "~/GRewd/codonAlignments/beastOut_singletonWithOs"
+beastWorkDir <- "~/GRewd/codonAlignments/beastOut_singletonWithOsNoCoreClan"
 dir.create(beastWorkDir)
 
 beastInputFiles <- dir(outBeastPath, full.names = T)
@@ -221,10 +241,11 @@ beastInputFiles <- dir(outBeastPath, full.names = T)
 commandListFile <- file.path(beastWorkDir, "commands.txt")
 writeLines(paste("beast",beastInputFiles),con = commandListFile)
 
-createSLURMarray(commandListFile,arraySize=150,
-                             workdir=beastWorkDir,
-                             preScript="module load beast",
-                             jobName="BigBeast")
+createSLURMarray(commandListFile,arraySize=150, 
+                 # mem = "1G", # observed maxRSS ~ 400MB 
+                 workdir=beastWorkDir,
+                 preScript="module load beast",
+                 jobName="BigBeast")
 ```
 
 ```{r simenScripts, OLD funker ikke }
