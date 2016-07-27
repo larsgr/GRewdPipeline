@@ -293,6 +293,70 @@ plotPairwiseCommonDEGs(combSigMat)
 ```
 
 
+### Pairwise correlation of short term log fold change
+
+```{r correlationMatrix, echo=FALSE,dev='svg',fig.height=5,fig.width=4}
+
+plotMat <- function(valueMat,
+                    main="",
+                    xlab="",
+                    labelMat = signif(valueMat,2),
+                    labels=spcID2spcName[colnames(valueMat)],
+                    valRange = range(pretty(valueMat[lower.tri(valueMat)])),
+                    valColors = colorRampPalette(RColorBrewer::brewer.pal(7,"RdYlGn")[1:5])(100) ){
+  
+  
+  valBreaks = seq(valRange[1],valRange[2],length.out = length(valColors)+1)
+  
+  colorMat = matrix( cut(valueMat, labels=valColors, breaks=valBreaks), nrow=nrow(valueMat))
+  
+  n <- ncol(valueMat)
+  
+  layout(mat = matrix(1:2,ncol=1),heights = c(3,1))
+  par(mar=c(0,1,2,1)+0.1)
+  plot.new()
+  plot.window( xlim=c(-5,n), ylim=c(-0.5,2*n-1.5), asp=1 )
+  x=c(-1,0,1,0);y=c(0,1,0,-1)
+  for(i in 1:n){
+    for(j in 1:i){
+      cellCenterX <- i-j
+      cellCenterY <- 2*n - (i+j)
+      if(i != j){
+        polygon(x = cellCenterX+x, cellCenterY+y,border = "black",col = colorMat[i,j])
+        text(x = cellCenterX, y = cellCenterY, labels = labelMat[i,j])
+      }
+    }
+  }
+
+  # plot species names in italic
+  for(i in 1:n){
+    text(x = 0, y = 2*(n-i),adj = c(1,0.5), 
+         labels = substitute(italic(s),list(s=labels[i])))
+  }
+  
+  title(main=main)
+
+  par(mar=c(4,6,1,6)+0.1)
+  image(x = valBreaks,z = matrix(valBreaks,ncol=1),col=valColors,
+        yaxt = "n", xlab=xlab,)
+
+  par(mar=c(5, 4, 4, 2) + 0.1)
+  layout(1)
+}  
+
+valueMat <- cor(DEmat$peak$lfc)
+
+plotMat(cor(DEmat$peak$lfc), main="Correlation of log fold change",xlab = "Pearson correlation coefficient",
+        valColors = colorRampPalette(RColorBrewer::brewer.pal(7,"YlOrRd")[1:5])(100))
+
+svg(filename = "~/GRewd/pipeline/articleFigures/FigureDE_correlation.svg",
+    width = 4, height = 5)
+plotMat(cor(DEmat$peak$lfc), main="Correlation of log fold change",xlab = "Pearson correlation coefficient",
+        valColors = colorRampPalette(RColorBrewer::brewer.pal(7,"YlOrRd")[1:5])(100))
+invisible(dev.off())
+```
+
+
 ```{r loadVST, echo=FALSE}
 # get vst data and make sample description table
 
@@ -338,6 +402,11 @@ boxplot(log10(varPerTimepoint),ylab="log10(variance at each timepoint)")
 
 ### Gene expression trees
 
+Trees are generated with neighbor joining using manahattan-distance between samples. Low expression orthogroups (`filterLowExpr <- apply(vst>3,1,all)`) are filtered to remove those where orthologs are missing or the expression level is generally low and therefore has higher variance.
+
+The following tree is based on the "raw" variance stabilized expression values
+
+
 ```{r bigSampleTree, echo=FALSE, fig.height=4,fig.width=7}
 # set filter for low expressed genes
 filterLowExpr <- apply(vst>3,1,all)
@@ -348,17 +417,14 @@ tree <- NJ(dm)
 
 tree <- rotate(rotate(rotate(rotateConstr(tree, tree$tip.label),node=75),node=76),node=77)
 
-# plot.phylo(tree2, show.tip.label = F, type= "u")
-# tiplabels( pch=sub(".*T(.).*","\\1",tree2$tip.label,perl=T), col=spcColors[match(substr(tree2$tip.label,1,1),substr(names(spcColors),1,1))])
-# nodelabels(frame = "none")
-
-
-
-
 par(mar=c(1,1,1,1))
-plot.phylo(tree, type="u",#show.tip.label = F,
+plot.phylo(tree, type="u", #show.tip.label = F,
              tip.color=spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))],
              ,cex = 1)
+
+# tiplabels( frame = "none", text = c(`T-1`="W0",T0="D0",T1="D1",T3="W4",T4="W9")[sub(".*(T-?[0134]).*","\\1",tree$tip.label,perl=T)], col=spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))])
+# legend("topright",legend = names(spcColors),text.col = spcColors, y.intersp = 0.8,bty = "n" )
+
 
 svg(filename = "~/GRewd/pipeline/articleFigures/FigureDE_sampleTree.svg",
     width = 7,height = 4)
@@ -372,19 +438,85 @@ par(mar=c(5, 4, 4, 2) + 0.1)
 
 ```
 
+### Sample tree based on relative expression in each species
 
-```{r exprTrees2, echo=FALSE}
+```{r exprTreeScaled, echo=FALSE}
+# subtract average expression per species
+Reduce(cbind, sapply(unique(sampleDesc$spc),function(spc){
+  isSpc <- sampleDesc$spc==spc
+  # get mean per timepoint
+  sapply(as.character(unique(sampleDesc$timepoint[isSpc])),function(timePoint){
+    rowMeans(vst[ ,isSpc & (sampleDesc$timepoint==timePoint), drop=F])
+  }) -> tpMeans
+#   # BrDi doesn't have T4.. does it help to use T3 as T4?
+#   if(!("T4" %in% colnames(tpMeans))){
+#     tpMeans <- cbind(tpMeans,T4=tpMeans[ ,"T3"]) # copy T3 where T4 is missing in Brachy
+#   }
+
+  vst[ ,isSpc] - rowMeans(tpMeans)
+})) -> x
+
+# # remove peak response genes
+# z <- x[filterLowExpr & rowSums(sigMatUpDown$peak)<1, ]
+# 
+# # remove ramp response genes
+# z <- x[filterLowExpr & rowSums(sigMatUpDown$ramp)<1, ]
+# 
+# # max one species with response
+# z <- x[filterLowExpr & rowSums(combSigMat)<2, ]
+# 
+# # remove genes with response in melica
+# z <- x[filterLowExpr & !combSigMat[,"MeNu1"], ]
+
+# # look at only W timepoints
+# z <- x[filterLowExpr, sampleDesc$timepoint %in% c("T-1","T3","T4")]
+
+z <- x[filterLowExpr, ]
+
+dm <- dist(t(z),method = "manhattan")
+tree <- NJ(dm)
+
+plot.phylo(tree, type="u", show.tip.label = F,
+             tip.color=spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))],
+             ,cex = 1)
+
+newTimepoints <- c(`T-1`="W0",T0="D0",T1="D1",T3="W4",T4="W9")
+tiplabels( frame = "none", text = newTimepoints[sub(".*(T-?[0134]).*","\\1",tree$tip.label,perl=T)], col=spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))])
+legend("bottomleft",legend = names(spcColors),text.col = spcColors, y.intersp = 0.8,bty = "n" )
+
+```
+
+### Tree based on only genes that are not DE
+
+```{r exprTreeNoDE, echo=FALSE}
+
+# don't include DEGs
+z <- x[filterLowExpr & rowSums(combSigMat)<1, ]
+
+dm <- dist(t(z),method = "manhattan")
+tree <- NJ(dm)
+
+plot.phylo(tree, type="u", show.tip.label = F,
+             tip.color=spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))],
+             ,cex = 1)
+
+newTimepoints <- c(`T-1`="W0",T0="D0",T1="D1",T3="W4",T4="W9")
+tiplabels( frame = "none", text = newTimepoints[sub(".*(T-?[0134]).*","\\1",tree$tip.label,perl=T)], col=spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))])
+legend("bottomleft",legend = names(spcColors),text.col = spcColors, y.intersp = 0.8,bty = "n" )
+
+```
+
+
+```{r exprTreesVST, echo=FALSE}
 #
-# Distance...
-
-
+# calculate tree for each timepoint
 lapply(setNames(levels(sampleDesc$timepoint),levels(sampleDesc$timepoint)),function(timepoint){
   sampleIdx <- sampleDesc$timepoint==timepoint
   zDesc <- sampleDesc[sampleIdx,]
   z <- vst[filterLowExpr,sampleIdx]
   z <- cbind(z,root=sample(z[,1]))
   
-  dm <- dist(t(z))
+  dm <- dist(t(z),method = "manhattan")/nrow(z)
   tree <- NJ(dm)
   tree <- root(tree,outgroup = "root",resolve.root = T)
   tree <- drop.tip(tree, "root")
@@ -395,13 +527,60 @@ layout(mat = matrix(1:5,nrow=1),widths = sapply(trees, function(tree) length(tre
 par(mar=c(5.1, 0.5, 4.1, 0.5))
 for( timepoint in names(trees)){
   tree <- trees[[timepoint]]
-  plot.phylo(tree,y.lim=c(0,100), 
-             tip.color=spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))],
-             direction = "downwards",main=timepoint,cex = 1)
+  tip.color <- spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))]
+  tree$tip.label <- newTimepoints[sub(".*(T-?[0134]).*","\\1",tree$tip.label,perl=T)]
+  plot.phylo(tree, y.lim=c(0,0.7),  tip.color=tip.color,
+             direction = "downwards", main=newTimepoints[timepoint],cex = 1)
+
                
 }
 par(mar=c(5, 4, 4, 2) + 0.1)
 layout(1)
+```
+
+```{r exprTreesCentered, echo=FALSE}
+#
+# calculate tree for each timepoint
+lapply(setNames(levels(sampleDesc$timepoint),levels(sampleDesc$timepoint)),function(timepoint){
+  sampleIdx <- sampleDesc$timepoint==timepoint
+  zDesc <- sampleDesc[sampleIdx,]
+  z <- x[filterLowExpr,sampleIdx]
+  z <- cbind(z,root=sample(z[,1]))
+  
+  dm <- dist(t(z),method = "manhattan")/nrow(z)
+  tree <- NJ(dm)
+  tree <- root(tree,outgroup = "root",resolve.root = T)
+  tree <- drop.tip(tree, "root")
+  return(tree)
+}) -> trees
+
+layout(mat = matrix(1:5,nrow=1),widths = sapply(trees, function(tree) length(tree$tip.label)))
+par(mar=c(5.1, 0.5, 4.1, 0.5))
+for( timepoint in names(trees)){
+  tree <- trees[[timepoint]]
+  tip.color <- spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))]
+  tree$tip.label <- newTimepoints[sub(".*(T-?[0134]).*","\\1",tree$tip.label,perl=T)]
+  plot.phylo(tree, y.lim=c(0,0.7),  tip.color=tip.color,
+             direction = "downwards", main=newTimepoints[timepoint],cex = 1)
+
+               
+}
+par(mar=c(5, 4, 4, 2) + 0.1)
+layout(1)
+
+```
+
+```{r exprTreesCenteredUnrooted, echo=FALSE,fig.width=4,fig.height=4}
+for( timepoint in names(trees)){
+  tree <- trees[[timepoint]]
+  tip.color <- spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))]
+  tree$tip.label <- newTimepoints[sub(".*(T-?[0134]).*","\\1",tree$tip.label,perl=T)]
+  plot.phylo(tree, type="u",  tip.color=tip.color,
+             main=newTimepoints[timepoint],cex = 1)
+
+               
+}
+
 ```
 
 

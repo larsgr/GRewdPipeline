@@ -1,0 +1,128 @@
+---
+title: "Broadly conserved response plot"
+output: html_document
+---
+
+### Goal of analysis
+
+The point is to illustrate that even though there are seemingly few single genes with conserved cold response across the pooids, there is a clear correlation when considering the average of many genes. To do this I have plotted the sliding window (windowsize=500 genes) mean lfc (y-axis) against the rank of lfc (x-axis). Only orthogroups expressed in all species are included (4981 orthogroups).
+
+```{r loadData, echo=FALSE}
+DEmat <- readRDS("~/GRewd/pipeline/data/DEmat.RDS")  # from: superGeneModel.Rmd
+vst <- readRDS("~/GRewd/pipeline/data/VSTnew.RDS")
+
+spcs <- colnames(DEmat$peak$lfc)
+names(spcs) <- spcs
+
+filterLowExpr <- apply(vst>3,1,all)
+```
+
+
+
+```{r plotMatrix, echo=F, fig.height=9,fig.width=9}
+slideMean<-function(x,windowsize=3,slide=2){
+  idx1<-seq(1,length(x)-windowsize+1,by=slide);
+  idx2<-seq(windowsize,length(x),by=slide);
+  cx <- c(0,cumsum(x));
+  return((cx[idx2+1]-cx[idx1])/windowsize);
+}
+
+m <- matrix(1:25, 5, 5, byrow = TRUE)
+layout(rbind(cbind(m,m+25),cbind(m+50,m+75)))
+par(mar=c(0,0,0,0))
+for(eff1 in c("peak","ramp")){
+  for(eff2 in c("peak","ramp")){
+    for(spc1 in spcs){
+      for(spc2 in spcs){
+        plot(NULL,type="n",ylim=c(-1,1),xlim=c(0,1),
+             axes = F,xlab=NA,ylab=NA,lwd=2)
+
+        y <- DEmat[[eff1]]$lfc[filterLowExpr,spc1]
+#           y <- rank(DEmat[[eff1]]$lfc[filterLowExpr,spc1])
+        idx <- order(DEmat[[eff2]]$lfc[filterLowExpr,spc2])
+        yMean <- slideMean(y[idx], windowsize=500,slide=50)
+#           plot(seq_along(yMean),yMean,type="l",ylim=c(1000,3981),
+#                axes = F,xlab=NA,ylab=NA,lwd=2)
+
+        if(spc1==spc2 & eff1 == eff2){
+          text(0.5,-0.4,labels = spc1)
+          text(0.5,0.4,labels = c(peak="Short term",ramp="Long term")[eff1])
+          box()
+        } else {
+          n=5
+          tapply(idx,cut(seq_along(idx),breaks = n,labels = 1:n), function(i){
+            cor.test(y[i],DEmat[[eff2]]$lfc[filterLowExpr,spc2][i],method="spearman")$p.value          
+          }) -> corPval
+  
+          cols <- colorRampPalette(c("white","#8899EE"))(6)
+          idxCorPval <- floor(-log10(corPval))+1
+          idxCorPval[idxCorPval>length(cols)] <- length(cols)
+          for(i in 1:n){
+            rect(seq(0,1,length.out = n+1)[i],-1,seq(0,1,length.out = n+1)[i+1],1,
+                 col = cols[idxCorPval[i]],border = NA)
+          }
+        }
+
+
+        abline(h=-0.5,lty=2,col="lightgray")
+        abline(h=0.5,lty=2,col="lightgray")
+        abline(h=0,lty=1, col="lightgray")
+        lines(seq(0,1,length.out = length(yMean)),yMean,lwd=2)
+             
+      }  
+    }
+  }
+}
+par(mar=c(5.1,4.1,4.1,2.1))
+layout(1)
+
+```
+
+```{r}
+DEdiurnal <- readRDS("~/GRewd/pipeline/data/DEdiurnal.RDS")
+
+m <- matrix(1:16, 4, 4, byrow = TRUE)
+layout(m)
+par(mar=c(0,0,0,0))
+for(spc1 in spcs[-4]){
+  for(spc2 in spcs[-4]){
+    if(spc1==spc2 & eff1 == eff2){
+      plot(NULL,xlim=c(-1,1),ylim=c(-2.5,2.5),axes = F,xlab=NA,ylab=NA)
+      text(0,0,labels = spc1)
+      box()
+    } else {
+      y <- DEdiurnal[[spc1]]$log2FoldChange[filterLowExpr]
+#           y <- rank(DEmat[[eff1]]$lfc[filterLowExpr,spc1])
+      idx <- order(DEdiurnal[[spc2]]$log2FoldChange[filterLowExpr])
+      yMean <- slideMean(y[idx], windowsize=500,slide=50)
+      plot(NULL,type="n",ylim=c(-1,1),xlim=c(0,1),
+           axes = F,xlab=NA,ylab=NA,lwd=2)
+#           plot(seq_along(yMean),yMean,type="l",ylim=c(1000,3981),
+#                axes = F,xlab=NA,ylab=NA,lwd=2)
+
+      n=5
+      tapply(idx,cut(seq_along(idx),breaks = n,labels = 1:n), function(i){
+        cor.test(y[i],DEdiurnal[[spc2]]$log2FoldChange[filterLowExpr][i],method="spearman")$p.value          
+      }) -> corPval
+
+      cols <- colorRampPalette(c("white","#8899EE"))(6)
+      idxCorPval <- floor(-log10(corPval))+1
+      idxCorPval[idxCorPval>length(cols)] <- length(cols)
+      for(i in 1:n){
+        rect(seq(0,1,length.out = n+1)[i],-1,seq(0,1,length.out = n+1)[i+1],1,
+             col = cols[idxCorPval[i]],border = NA)
+      }
+
+      abline(h=-0.5,lty=2,col="lightgray")
+      abline(h=0.5,lty=2,col="lightgray")
+      abline(h=0,lty=1, col="lightgray")
+      lines(seq(0,1,length.out = length(yMean)),yMean,lwd=2)
+           
+    }
+  }  
+}
+par(mar=c(5.1,4.1,4.1,2.1))
+layout(1)
+
+```
+

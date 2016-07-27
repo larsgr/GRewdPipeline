@@ -36,8 +36,6 @@ for(h in colnames(hTestable)){
 # load DEmat based based on superGenes
 DEmat <- readRDS("~/GRewd/pipeline/data/DEmat.RDS")  # from: superGeneModel.Rmd
 
-# load variance stabilized lolium (Falster) expression
-loliumVSD <- read.table("~/GRewd/pipeline/indata/LoliumVSD/Fal_leaf_DE_VSD.txt",header=T,sep="\t",row.names = 1)
 
 
 # load groups
@@ -48,7 +46,7 @@ goodGrps <- loadOrthoGrpsArray(file.path(orthoPath,"splitGroups/goodGroups.txt")
 
 ### Combined peak and ramp
 
-A gene is considered low temperature induced (LTI) if it is significantly differencially expressed (P-adjusted < 0.05 and abs(log fold change) > 1) either in peak or ramp.
+A gene is considered cold responsive if it is significantly differencially expressed (P-adjusted < 0.05 and abs(log fold change) > 1) either in peak or ramp.
 
 ```{r sigVennPlet, echo=FALSE}
 # Get significant genes for peak and ramp (NA values equals not significant)
@@ -69,6 +67,9 @@ title(main="significant peak or ramp (up or down)",sub="p.adj<0.05 & |lfc|>1")
 # 
 # We used the data from leafs of the Falster variant.
 #  
+
+# load variance stabilized lolium (Falster) expression
+loliumVSD <- read.table("~/GRewd/pipeline/indata/LoliumVSD/Fal_leaf_DE_VSD.txt",header=T,sep="\t",row.names = 1)
 
 
 
@@ -140,107 +141,114 @@ sapply( hSpcs2, function(branchSpcs){
 ```
 
 ```{r treePlot, echo=FALSE}
-# spcTree <- read.tree(text = "((((((LoPe:1,HoVu:1)H4c:1,BrDi:2)H4b:1,MeNu1:3)H4e:1,StLa:4)H4d:1,NaSt:5)H4a:1,Os_R:6):1;")
-
-# spcTree <- read.tree(text = "(((((HoVu:2,BrDi:2)H4b:1,MeNu1:3)H4e:1,StLa:4)H4d:1,NaSt:5)H4a:1,Os_R:6):1;")
-
-# New species tree with collapse Stipa/Melica
+# New species tree with collapsed Stipa/Melica
 spcTree <- read.tree(text = "((((HoVu:1,BrDi:1)H4b:1,MeNu1:2,StLa:2)H4d:1,NaSt:3)H4a:1,Os_R:4):0;")
 
+# get edge numbers for the branch specific edges
+branchNodeNr <- match(colnames(hSig),spcTree$node.label) + length(spcTree$tip.label)
+branchEdgeNr <- setNames( match(branchNodeNr,spcTree$edge[ ,2]), colnames(hSig) )
 
-# convert the 
+# Species names
 spcLabels <- c( Os_R = "Oryza",
                 NaSt = "Nardus",
                 StLa = "Stipa",
                 MeNu1 = "Melica",
                 BrDi = "Brachypodium",
                 HoVu = "Hordeum") #,LoPe = "Lolium")
-                
-plot.phylo(spcTree,edge.width = 3,show.tip.label = F, x.lim=c(0,10))
-tiplabels( paste(" ",spcLabels), tip = match(spcTree$tip.label, names(spcLabels)) ,
-           adj = 0,frame = "none",cex=1.2)
-
-# get edge numbers for the species specific edges
-edgeNr <- setNames( match(match(spcs,spcTree$tip.label),spcTree$edge[ ,2]), spcs )
-# plot number of species specific LTI genes
-edgelabels(colSums(spcSig),edge = edgeNr,adj = c(0.5,-0.4),cex=1.3,frame="none")
-
-# get edge numbers for the branch specific edges
-branchNodeNr <- match(colnames(hSig),spcTree$node.label) + length(spcTree$tip.label)
-branchEdgeNr <- setNames( match(branchNodeNr,spcTree$edge[ ,2]), colnames(hSig) )
-
-edgelabels(colSums(hSig),edge = branchEdgeNr,adj = c(0.5,1.4),cex=1.3,frame="none")
 
 
-# # Exclusive in lolium
-# loliumEdgeNr <- match(match("LoPe",spcTree$tip.label),spcTree$edge[ ,2])
-# edgelabels(sum(loliumSig & !apply(combSigMat,1,any)) ,edge = loliumEdgeNr,
-#            adj = c(0.5,-0.4),cex=1.3,frame="none", col="red")
+svg(filename = "~/GRewd/pipeline/articleFigures/FigureGO_SpcTree.svg",
+    width = 6, height = 3)
+
+par(mar=c(1,1,1,1) + 0.1)
+plot.phylo(spcTree,edge.width = 3,show.tip.label = F,x.lim=c(0,7),y.lim=c(0,7))
+
+for( i in seq_along(spcLabels)){
+  tiplabels( bquote(italic(.(spcLabels[i]))), tip = match(spcTree$tip.label, names(spcLabels))[i] ,
+             adj = 0,frame = "none",cex=1.2)  
+}
+par(mar=c(5, 4, 4, 2) + 0.1)
+
+invisible(dev.off())
+  
 # 
-# # Exclusive in lolium and HoVu (H4c)
-# sigH4c <- loliumSig & combSigMat[,"HoVu"] & !apply(combSigMat[,colnames(combSigMat) != "HoVu"],1,any)
-# branchH4cEdgeNr <- match(match("H4c",spcTree$node.label) + length(spcTree$tip.label),
-#                          spcTree$edge[ ,2])
-# edgelabels(sum(sigH4c),edge = branchH4cEdgeNr,adj = c(0.5,1.4),cex=1.3,frame="none", col="red")
+# tiplabels( paste(" ",spcLabels), tip = match(spcTree$tip.label, names(spcLabels)) ,
+#            adj = 0,frame = "none",cex=1.2)
 # 
-# hSigPlus <- cbind(H4c=sigH4c,hSig)
-hSigPlus <- cbind(hSig)
+# # get edge numbers for the species specific edges
+# edgeNr <- setNames( match(match(spcs,spcTree$tip.label),spcTree$edge[ ,2]), spcs )
+# 
+# edgelabels(colSums(hSig),edge = branchEdgeNr,adj = c(0.5,1.4),cex=1.3,frame="none")
 
-sapply(colnames(hSigPlus),function(h){
-  grpIDsSigBranch <- rownames(hSigPlus)[hSigPlus[,h]]
-  
-  # how many are testable?
-  #table(grpIDsSigBranch %in% rownames(hTestable))
-  grpIDs <- grpIDsSigBranch[grpIDsSigBranch %in% rownames(hTestable)]
-  
-  nLTItested <- sum(!is.na(pamlMat[grpIDs,h]))
-  nLTIpositive <- sum(na.omit(pamlMat[grpIDs,h]<0.05))
-  
-  #sum(na.omit(pamlMat[ ,h]<0.05))/length(na.omit(pamlMat[ ,h]))
-  
-  pVal <- phyper(q = nLTIpositive, # number LTI that tested significant
-                 m = sum(na.omit(pamlMat[ ,h]<0.05)), # number tested that was significant
-                 n = sum(na.omit(pamlMat[ ,h]>=0.05)), # number tested that was not significant
-                 k = nLTItested, # number of LTI that have been tested
-                 lower.tail=F)
-  
-#  paste0(round(100*nLTIpositive/nLTItested,digits = 2),"%(p=",round(pVal,2),")")
-  paste0(nLTIpositive,"/",nLTItested,ifelse(pVal<0.05,"*",""))
-}) -> branchPosSel
-
-# edgelabels(branchPosSel,edge = c(branchH4cEdgeNr,branchEdgeNr),adj = c(0.5,2.8),frame="none")
-edgelabels(branchPosSel,edge = branchEdgeNr,adj = c(0.5,2.8),frame="none")
 
 ```
 
-```{r pieTree, echo=FALSE}
+```{r pieTree, echo=FALSE,fig.height=3,fig.width=6}
+
+# make the pamlMat have the same rows as hSig (call it PSmat)
+# start with all NA
+PSmat <- matrix(NA,ncol=ncol(pamlMat),nrow=nrow(hSig),dimnames = list(rownames(hSig),colnames(pamlMat)))
+# fill in rows from pamlMat
+grpIDsTestedHCOG <- rownames(pamlMat)[rownames(pamlMat) %in% rownames(PSmat)]
+PSmat[grpIDsTestedHCOG, ] <- pamlMat[grpIDsTestedHCOG, ]
 
 sapply(colnames(hSig), function(h){
-  isTestable <- !is.na(pamlMat[,h]) & rownames(pamlMat) %in% rownames(hSig)
+  isTested <- !is.na(PSmat[,h]) # only include HCOGs that has been tested for positive selection (PS)
+  isDE <- hSig[isTested,h]
+  isPS <- PSmat[isTested,h]<0.05 
+  pVal <- phyper(q = sum(isPS & isDE), # number DEGs with PS
+                 m = sum(isPS), # total PS
+                 n = sum(!isPS), # total not PS
+                 k = sum(isDE), # total DEGs 
+                 lower.tail=F) # test for overrepresentation of DEGs in PS
 
-  pamlSig <- pamlMat[isTestable,h] < 0.05
-  DESig <- hSig[match(rownames(pamlMat)[isTestable],rownames(hSig))]
-  
-  return( c( nDE=sum(DESig), 
-             nTot=sum(isTestable), 
-             propPamlDE = sum(pamlSig & DESig)/sum(DESig),
-             propPamlNotDE = sum(pamlSig & !DESig)/sum(!DESig) ))  
+  return( c( nDE=sum(isDE), 
+             nNotDE = sum(!isDE),
+             nPSnotDE = sum(isPS & !isDE),
+             nPSDE = sum(isPS & isDE),
+             propPSDE = sum(isPS & isDE)/sum(isDE),
+             propPSnotDE = sum(isPS & !isDE)/sum(!isDE),
+             pVal = pVal) )  
 }) -> pieStats
 
+plotPosSelection <- function(){
+  par(mar=c(1, 1, 1, 1) + 0.1)
+  plot.phylo(spcTree,edge.width = 3,show.tip.label = F, x.lim=c(0,7),y.lim=c(0,7))
+  
+  for( i in seq_along(spcLabels)){
+    tiplabels( bquote(italic(.(spcLabels[i]))), tip = match(spcTree$tip.label, names(spcLabels))[i] ,
+               adj = 0,frame = "none",cex=1.2)  
+  }
+  
+  # tiplabels( paste(" ",spcLabels), tip = match(spcTree$tip.label, names(spcLabels)) ,
+  #            adj = 0,frame = "none",cex=1.2)
+  
+  edgelabels(edge = branchEdgeNr,
+             pie = cbind(pieStats["propPSnotDE",],1-pieStats["propPSnotDE",]), 
+             piecol=c("red","white"), cex=1.8)
+  
+  edgelabels(edge = branchEdgeNr,
+             pie = cbind(pieStats["propPSDE",],1-pieStats["propPSDE",]), 
+             piecol=c("purple","lightblue"), cex=1.1)
+  
+  
+  edgelabels(paste0(pieStats["nPSnotDE",],"/",pieStats["nNotDE",]),
+             edge = branchEdgeNr,adj = c(0.5,-2.4),frame="none",cex=0.8)
+  
+  edgelabels(paste0(pieStats["nPSDE",],"/",pieStats["nDE",]),
+             edge = branchEdgeNr,adj = c(0.5,3.6),frame="none",cex=0.8)
+  
+  edgelabels(paste0("P = ",signif(pieStats["pVal",],2)),
+             edge = branchEdgeNr,adj = c(0.5,4.9),frame="none",cex=0.8)
+  par(mar=c(5, 4, 4, 2) + 0.1)
+}
 
-plot.phylo(spcTree,edge.width = 3,show.tip.label = F, x.lim=c(0,7))
-tiplabels( paste(" ",spcLabels), tip = match(spcTree$tip.label, names(spcLabels)) ,
-           adj = 0,frame = "none",cex=1.2)
+plotPosSelection() # once for the RMarkdown
 
-edgelabels(edge = branchEdgeNr,
-           pie = cbind(pieStats["propPamlNotDE",],1-pieStats["propPamlNotDE",]), 
-           piecol=c("red","white"), cex=1.8)
-
-edgelabels(edge = branchEdgeNr,
-           pie = cbind(pieStats["propPamlDE",],1-pieStats["propPamlDE",]), 
-           piecol=c("purple","lightblue"), cex=1.1)
-
-
+svg(filename = "~/GRewd/pipeline/articleFigures/FigurePosSelection.svg",
+    width = 6, height = 3)
+plotPosSelection() # and once for the "official" figure
+invisible(dev.off())
 ```
 
 

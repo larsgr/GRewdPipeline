@@ -1,0 +1,94 @@
+---
+title: "Compare expression with the R.M. Davidson article"
+output: html_document
+---
+
+
+```{r loadLibraries, echo=FALSE, message=FALSE}
+library(DESeq2)
+library(gplots)
+library(stringr)
+
+
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+
+
+```{r loadData, echo=FALSE}
+BdTbl <- read.table("indata/RMDavidson/TPJ_5005_sm_TableS3.txt",sep = "\t",skip = 1,header=T)
+
+orthoPath <- "/mnt/NOBACKUP/mariansc/share/orthos"
+
+# load DE (including VST)
+load(file.path(orthoPath,"DESeq/DE.RData"))
+
+vst <- readRDS("~/GRewd/pipeline/data/VSTnew.RDS")  
+
+
+
+grps <- loadOrthoGrpsArray(file.path(orthoPath,"orthoMCL/groups.txt"))
+
+lens <- sapply(grps,length)
+dim(lens) <- dim(grps)
+dimnames(lens) <- dimnames(grps)
+```
+
+
+```{r compareBrDi, echo=FALSE}
+flatSeqIDs <- sub("\\..*$","",unlist(grps[ ,"Bd_R"]))
+flatGrpIDs <- rep(rownames(grps),lapply(grps[ ,"Bd_R"],length))
+BdTbl$grpID <- flatGrpIDs[match(BdTbl$gene.ID, flatSeqIDs)]
+
+
+idx <- lens[,"Bd_R"]==1 & lens[,"BrDi"]==1
+BdTbl$BrDi.seqID <- unlist(grps[idx,"BrDi"])[match(BdTbl$gene.ID,
+                                                   sub("\\..*$","",unlist(grps[idx,"Bd_R"])))]
+
+BdExprTbl <- as.matrix(BdTbl[!is.na(BdTbl$BrDi.seqID), grep("_bd$",colnames(BdTbl))])
+rownames(BdExprTbl) <- BdTbl$BrDi.seqID[!is.na(BdTbl$BrDi.seqID)]
+BdCombExprTbl <- cbind(log2(1+BdExprTbl),DE$BrDi$vst[rownames(BdExprTbl), ])
+
+RColorBrewer::display.brewer.all()
+
+min(cor(BdCombExprTbl))
+heatmap(cor(BdCombExprTbl),scale="none", breaks=seq(0,1,length.out = 100),
+        col=colorRampPalette(rev(RColorBrewer::brewer.pal(11,"Spectral")))(99))
+plot(hclust(as.dist(1-cor(BdCombExprTbl))))
+```
+
+
+
+```{r compareHoVu, echo=FALSE}
+idx <- lens[,"Bd_R"]==1 & lens[,"HoVu"]==1
+BdTbl$HoVu.seqID <- unlist(grps[idx,"HoVu"])[match(BdTbl$gene.ID,
+                                                   sub("\\..*$","",unlist(grps[idx,"Bd_R"])))]
+
+BdExprTbl2 <- as.matrix(BdTbl[!is.na(BdTbl$HoVu.seqID), grep("_bd$",colnames(BdTbl))])
+rownames(BdExprTbl2) <- BdTbl$HoVu.seqID[!is.na(BdTbl$HoVu.seqID)]
+BdCombExprTbl2 <- cbind(log2(1+BdExprTbl2),DE$HoVu$vst[rownames(BdExprTbl2), ])
+
+heatmap(cor(BdCombExprTbl2),scale="none", breaks=seq(0,1,length.out = 100),
+        col=colorRampPalette(rev(RColorBrewer::brewer.pal(11,"Spectral")))(99))
+plot(hclust(as.dist(1-cor(BdCombExprTbl2))))
+
+```
+
+
+```{r broken, echo=FALSE, eval=FALSE}
+idx <- lens[,"Bd_R"]==1 & lens[,"HoVu"]==1 & lens[,"BrDi"]==1
+BdTbl$HoVu.seqID <- unlist(grps[idx,"HoVu"])[match(BdTbl$gene.ID,
+                                                   sub("\\..*$","",unlist(grps[idx,"Bd_R"])))]
+
+BdExprTbl3 <- as.matrix(BdTbl[!is.na(BdTbl$HoVu.seqID) & !is.na(BdTbl$HoVu.seqID), grep("_bd$",colnames(BdTbl))])
+
+
+rownames(BdExprTbl2) <- BdTbl$HoVu.seqID[!is.na(BdTbl$HoVu.seqID)]
+BdCombExprTbl2 <- cbind(log2(1+BdExprTbl2),
+                        DE$HoVu$vst[BdTbl$HoVu.seqID[!is.na(BdTbl$HoVu.seqID)], ])
+
+heatmap(cor(BdCombExprTbl2),scale="none", breaks=seq(0,1,length.out = 100),
+        col=colorRampPalette(rev(RColorBrewer::brewer.pal(11,"Spectral")))(99))
+plot(hclust(as.dist(1-cor(BdCombExprTbl2))))
+```
+

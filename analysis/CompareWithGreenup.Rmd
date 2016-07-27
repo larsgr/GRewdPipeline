@@ -8,7 +8,7 @@ output: html_document
 Validate that our data can detect cold responsive genes by comparing with a set of genes that have been identified as responsive to cold in an earlier study, specifically the genes in table S10 "A core set of low-temperature responsive contigs in barley" from [Greenup et al. 2011](journals.plos.org/plosone/article?id=10.1371/journal.pone.0017900)
 
 
-```{r loadLibraries, echo=FALSE, message=FALSE}
+```{r loadLibraries, include=FALSE}
 library(DESeq2)
 library(stringr)
 
@@ -98,6 +98,28 @@ Hv_bres <- Hv_bres[!allNA,]
 seqIDmat <- seqIDmat[!allNA, ]
 seqIDmat <- sub("^.+\\|","",seqIDmat)
 ```
+
+### Sequences included
+```{r probemappingFromBioMart, echo=FALSE}
+martMap <- read.table("~/GRewd/pipeline/indata/genesOfInterrest2/mart_export_barley_probe_mapping.txt",
+                      header = T, sep="\t", stringsAsFactors=F)
+#annotTbl$martMap <- martMap$Gene.stable.ID[match(annotTbl$Contig, martMap$Affymetrix.array.Barley.ID)]
+Hv_bres$martMap <- martMap$Gene.stable.ID[match(Hv_bres$qseqid, martMap$Affymetrix.array.Barley.ID)]
+#isMatch <- sub(".*\\|([^\\.]+).*","\\1",perl=T,Hv_bres$sseqid) == Hv_bres$martMap
+```
+
+
+```{r showTable,echo=F, results="asis"}
+fc <- annotTbl$Dicktoo_Chill_logFC[ match(Hv_bres$qseqid,annotTbl$Contig) ]
+idxOrder <- order(fc)
+
+knitr::kable(cbind(grpId = Hv_bres$grpID,
+                   Hv_R = sub("Hv_R\\|","",Hv_bres$sseqid),
+                   mart = Hv_bres$martMap,
+                   seqIDmat,
+                   Annotation = annotTbl$alt_annotation[ match(Hv_bres$qseqid,annotTbl$Contig)])[rev(idxOrder),])
+```
+
 
 ### Heatmap with best hit
 

@@ -28,6 +28,7 @@ source("~/GRewd/pipeline/R/orthoGrpTools.R")
 
 expr <- readRDS(file = "~/GRewd/pipeline/data/superExprMatrix.RDS")
 sampleIDs <- colnames(expr)
+superGrpIDs <- rownames(expr)
 rm(expr)
 
 spcs <- c("HoVu","BrDi","MeNu1","StLa","NaSt")
@@ -73,8 +74,10 @@ grps <- loadOrthoGrpsArray(file.path(orthoPath,"orthoMCL/groups.txt"))
 
 nOrthoGrps <- colSums(!apply(grps[ ,spcs],2,sapply,is.null))
 nGoodOrthoGrps <- colSums(!apply(goodGrps[ ,spcs],2,sapply,is.null))
+nSuperOrthoGrps <- colSums(!apply(goodGrps[superGrpIDs,spcs],2,sapply,is.null))
 
-statTable <- data.frame(nSamples,totReads,contigs,nOrfs,nOrthoGrps,nGoodOrthoGrps)
+
+statTable <- data.frame(nSamples,totReads,contigs,nOrfs,nOrthoGrps,nSuperOrthoGrps)
 ```
 
 ```{r showTable, echo=FALSE}

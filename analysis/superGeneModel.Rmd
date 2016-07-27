@@ -123,6 +123,13 @@ if( !file.exists(DEnewFile)){
                                 design = formula(~ sf ))
   
   dds <- DESeq(dds)
+
+#   # check for genes differencially expressed between morning and evening (D0 vs W0)
+#   lapply(spcs[-4],function(spc){
+#     results(dds, contrast=c("sf",paste0(spc,"peak0"),paste0(spc,"ramp0")))
+#   }) -> DEnew
+#   saveRDS(DEnew,"~/GRewd/pipeline/data/DEdiurnal.RDS")
+  
   
   lapply(spcs,function(spc){
     
@@ -133,6 +140,7 @@ if( !file.exists(DEnewFile)){
     } else {
       resRamp <- results(dds, contrast=c("sf",paste0(spc,"ramp1"),paste0(spc,"ramp0")))      
     }
+    
     
     return(list(resRamp=resRamp,resPeak=resPeak)) 
   }) -> DEnew

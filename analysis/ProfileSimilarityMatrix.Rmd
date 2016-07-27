@@ -1,0 +1,77 @@
+---
+title: "Profile similarity matrix"
+output: html_document
+---
+
+Here I try to make a plot similar to the one they have in [this article](http://www.plantcell.org/lookup/doi/10.1105/tpc.15.00328)
+
+
+```{r loadData, echo=FALSE}
+DEmat <- readRDS("~/GRewd/pipeline/data/DEmat.RDS")  # from: superGeneModel.Rmd
+```
+
+
+The plot is a way to visualize the similarity of expression profiles. It works by first classifying the expression profile of each gene into a set categories. In the article they used unsupervised profile clustering to achieve this. I opted to divide into predifined categories based on the direction of differential expression in the short term and long term cold response. Below is an illustration of how they were define.
+
+```{r classifyProfiles, echo=FALSE}
+# alternative 1) use stat
+x <- as.factor(paste0(cut(DEmat$peak$stat,breaks = c(-Inf,-1,1,Inf),labels=c("sD","sN","sU")),
+                      cut(DEmat$ramp$stat,breaks = c(-Inf,-1,1,Inf),labels=c("lD","lN","lU"))))
+# # alternative 2) use lfc
+# x <- as.factor(paste0(cut(DEmat$peak$lfc,breaks = c(-Inf,-0.3,0.3,Inf),labels=c("sD","sN","sU")),
+#                       cut(DEmat$ramp$lfc,breaks = c(-Inf,-0.3,0.3,Inf),labels=c("lD","lN","lU"))))
+# 
+# # alternative 3) up/down
+# x <- as.factor(paste0(cut(DEmat$peak$lfc,breaks = c(-Inf,0,Inf),labels=c("sD","sU")),
+#                       cut(DEmat$ramp$lfc,breaks = c(-Inf,0,Inf),labels=c("lD","lU"))))
+
+
+dim(x) <- dim(DEmat$peak$stat)
+dimnames(x) <- dimnames(DEmat$peak$stat)
+
+
+```
+
+```{r categoryIllustrationPlot, echo=FALSE,fig.height=4,fig.width=4}
+plot(NULL, xlim=c(-2.8,2.8),ylim=c(-2.8,2.8),
+     xlab="long term response (stat)",
+     ylab="short term (stat)", main="Profile categories")
+abline(h=1,lty=2);abline(h=-1,lty=2);abline(v=1,lty=2);abline(v=-1,lty=2)
+text(x=rep(c(-2,0,2),times = 3), y=rep(c(-2,0,2),each = 3), labels = levels(x))
+```
+
+After classifying each gene for all species we user fishers exact test to identify significant overlap of profile categories. This is done for all combinations of categories (except sNlN) and species. Example: is there an overlap between the genes/orthologs that are sUlU (up in both short and long term response) in StLa and NaSt? The P-values from the tests are plotted in a heatmap (white: P>0.1, black: P<0.00001, and four shades of gray between)
+
+
+```{r calcProfOverlap, echo=FALSE,fig.height=9,fig.width=9}
+spcs <- colnames(x)
+names(spcs) <- spcs
+# change the order so that consecutive profiles are similar
+profTypes <- levels(x)[c(9,8,7,4,1,2,3,6)]
+
+lapply(spcs,function(spc1){
+  lapply(spcs,function(spc2){
+    sapply(profTypes,function(pt1){
+      sapply(profTypes,function(pt2){
+        fisher.test(table(x[,spc1]==pt1,x[,spc2]==pt2), alternative = "greater")$p.value
+      })      
+    }) -> ptPvalMat
+    colnames(ptPvalMat) <- paste0(spc1,"_",colnames(ptPvalMat))
+    rownames(ptPvalMat) <- paste0(spc2,"_",rownames(ptPvalMat))
+    round(-log10(ptPvalMat+0.0000000001),digits = 3)
+  })
+}) -> ptPval
+
+# combine the list of lists of matrices into a large matrix
+Reduce(cbind,lapply(ptPval,function(matList){
+  Reduce(rbind,matList)
+})) -> ptPbigMat
+
+```
+
+```{r, echo=FALSE}
+heatmap(ptPbigMat,Rowv = NA,Colv = NA,scale="none",
+        col=colorRampPalette(c("white","black"))(6),breaks=c(0:5,100))
+
+```
+

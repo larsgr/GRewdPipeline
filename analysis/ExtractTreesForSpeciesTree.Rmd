@@ -9,6 +9,7 @@ library(phangorn)
 
 
 source("~/GRewd/pipeline/R/orthoGrpTools.R")
+source("~/GRewd/pipeline/R/myFastaTools.R")
 ```
 
 ```{r loadData, echo=FALSE, cache=TRUE}
@@ -63,7 +64,6 @@ It was found that filtering on core/basal split existance could bias the estimat
 * Change the sequence ID's to two letter species ID (Ns, Sl, Mn, Bd, Hv...)
 
 ```{r defFuns, echo=FALSE}
-source("~/GRewd/pipeline/R/myFastaTools.R")
 
 # # Read fasta file as named character vector
 # readFasta <- function(inFastaFile){
@@ -190,12 +190,15 @@ for( grpID in rownames(goodGrps)[singletonWithOsNoCoreClan]){
 
 ```{r generateBeastInput, echo=FALSE, eval=FALSE}
 
-beastTemplate <- readLines('~/GRewd/pipeline/indata/BeastTemplate/dummy.txt')
+# beastTemplate <- readLines('~/GRewd/pipeline/indata/BeastTemplate/dummy.txt')
+# beastTemplate <- readLines('~/GRewd/pipeline/indata/BeastTemplate/dummy.xml')
+beastTemplate <- readLines('~/GRewd/pipeline/indata/BeastTemplate/new_dummy.xml')
 
-# inFastaPath <- "~/GRewd/codonAlignments/singletonWithOs"
-# outBeastPath <- "~/GRewd/codonAlignments/beast_singletonWithOs"
-inFastaPath <- "~/GRewd/codonAlignments/singletonWithOsNoCoreClan"
-outBeastPath <- "~/GRewd/codonAlignments/beast_singletonWithOsNoCoreClan"
+
+inFastaPath <- c("~/GRewd/codonAlignments/singletonWithOs",
+                 "~/GRewd/codonAlignments/singletonWithOsNoCoreClan")
+outBeastPath <- "~/GRewd/codonAlignments/beast_singletonWithOs"
+
 dir.create(outBeastPath)
 
 fastaFiles <- dir(inFastaPath, full.names = T)
@@ -232,8 +235,8 @@ for(fastaFile in fastaFiles){
 ```{r runBeast, echo=FALSE, eval=FALSE}
 source("processes/SLURMscript/createSLURMscript.R")
 
-# beastWorkDir <- "~/GRewd/codonAlignments/beastOut_singletonWithOs"
-beastWorkDir <- "~/GRewd/codonAlignments/beastOut_singletonWithOsNoCoreClan"
+beastWorkDir <- "~/GRewd/codonAlignments/beastOut_singletonWithOs"
+
 dir.create(beastWorkDir)
 
 beastInputFiles <- dir(outBeastPath, full.names = T)
@@ -242,7 +245,8 @@ commandListFile <- file.path(beastWorkDir, "commands.txt")
 writeLines(paste("beast",beastInputFiles),con = commandListFile)
 
 createSLURMarray(commandListFile,arraySize=150, 
-                 # mem = "1G", # observed maxRSS ~ 400MB 
+                 mem = "1G", # observed maxRSS ~ 400MB 
+                 partition = "cigene,verysmallmem",
                  workdir=beastWorkDir,
                  preScript="module load beast",
                  jobName="BigBeast")

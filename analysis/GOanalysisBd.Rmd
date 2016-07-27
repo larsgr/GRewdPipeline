@@ -106,6 +106,8 @@ testGOgrps <- function(grpIDs, bkGrpIDs = NULL, ontology = "BP"){
 
   # get grps belonging to each of the 
   GO2grpID <- genesInTerm(GOdata)
+  g_GO2grpID <<- GO2grpID # store in global variable for later
+
   tbl$SigGrpIDs <- ""
   idx <- tbl$Significant > 0 & tbl$Significant < 50
   tbl$SigGrpIDs[idx] <- sapply(GO2grpID[ rownames(tbl)[idx] ], function(GOgrpID){
@@ -503,8 +505,10 @@ sigGOnormMat <- t(apply(sigGOmat[sortedSigGOs,],1,"/",colSums(sigGOmat[idxSlim, 
 
 
 # reorder columns
-colIdx <- c(as.vector(t(matrix(1:(ncol(sigGOnormMat)-1),ncol=3))),ncol(sigGOnormMat))
-sigGOnormMat <- sigGOnormMat[,colIdx]
+colNamesOrdered <- c("H4a","H4aUp","H4aDown","H4d","H4dUp","H4dDown","H4b","H4bUp","H4bDown","all")
+colDisplayNamesOrdered <- c(rep(c("Up/Down","Up only","Down only"),3),"all")
+
+colOrder <- match(colNamesOrdered,colnames(sigGOnormMat))
 
 idxSigGO <- rownames(sigGOmat)%in%sortedSigGOs
 cbind(
@@ -516,27 +520,36 @@ cbind(
   gAnn = c(sapply(sigGOcomb, with, length(unique(unlist(strsplit(SigGrpIDs[idxSlim],","))))),NA),
   # count number of genes with significant annotations
   gSigAnn = c(sapply(sigGOcomb, with, length(unique(unlist(strsplit(SigGrpIDs[idxSigGO],","))))),
-              NA) # length(unique(unlist(GO2grpID[sortedSigGOs])))
-)[colIdx,] -> colStats
+              # calculate number of genes that are annotated with at least one of the sortedSigGOs:
+              length(unique(unlist(g_GO2grpID[sortedSigGOs]))))
+) -> colStats
 
-labs <- paste0(rownames(colStats),"(",colStats[,"nSigAnn"],"/",colStats[,"gSigAnn"],")")
+
+labsOrdered <- paste0(colDisplayNamesOrdered,
+                      " (",colStats[colOrder,"nSigAnn"],"/",colStats[colOrder,"gSigAnn"],")")
+
+
+svg(filename = "~/GRewd/pipeline/articleFigures/FigureGO.svg",
+    width = 9, height = 6)
 
 par(mar=c(8, 4, 4, 2) + 0.1)
-barplot(sigGOnormMat,col=GO2Col[sortedSigGOs],width=0.5, space=c(1,rep(c(1,1,2),3)),
-        las=2, xlim=c(0,40), ylab="Proportion of slim GO annotations",
-        names.arg=labs)
+barplot(sigGOnormMat[,colOrder],col=GO2Col[sortedSigGOs],width=0.5, space=c(1,rep(c(1,1,2),3)),
+        las=2, xlim=c(0,30), ylab="Proportion of GO annotations",
+        names.arg=labsOrdered)
 par(mar=c(5, 4, 4, 2) + 0.1)
 legend("topright",legend = rev(getGOterms(sortedSigGOs)),
        fill=rev(GO2Col[sortedSigGOs]))
 # legend("right",legend = c("(div. GO's)",rev(getGOterms(sortedSigGOs[1:12]))),
 #        fill=c("white",rev(GO2Col)))
 
-y <- apply(sigGOnormMat,2,function(x){cumsum(x)-x/2})[,-ncol(sigGOnormMat)]
-pval <- sigGOpvalmat[rownames(sigGOnormMat),colIdx[-ncol(sigGOnormMat)]]
+y <- apply(sigGOnormMat[,colOrder],2,function(x){cumsum(x)-x/2})[,-ncol(sigGOnormMat)]
+pval <- sigGOpvalmat[rownames(sigGOnormMat),colOrder[-ncol(sigGOnormMat)]]
 sigLabel <- cut(pval,c(0,0.005,0.01,0.05,1),labels=c("***","**","*",""))
 
-text(x = 0.2+rep(cumsum(c(1,rep(c(1,1,1.5),3)))[-ncol(sigGOnormMat)],each=nrow(y)),
+text(x = 0.2+rep(cumsum(c(1,rep(c(1,1,1.5),3)))[-ncol(sigGOnormMat)],each=nrow(y)),cex = 0.8,
      y=y[,1:ncol(y)],labels = sigLabel,adj = 0.5,srt=90)
+
+invisible(dev.off())
 
 ```
 
