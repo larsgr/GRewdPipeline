@@ -179,14 +179,6 @@ refGenomesNucl <- list(
   Hv_R = file.path(refGenDir,"barley_HighConf_genes_MIPS_23Mar12_CDSSeq.fa")
 )
 
-# download.file("ftp://ftpmips.helmholtz-muenchen.de/plants/brachypodium/v1.2/brachypodium_1.2_Protein_representative.fa",
-#               destfile = refGenomes$Bd_R )
-# download.file("ftp://ftpmips.helmholtz-muenchen.de/plants/barley/public_data/genes/barley_HighConf_genes_MIPS_23Mar12_ProteinSeq.fa",
-#               destfile = refGenomes$Hv_R )
-# download.file("ftp://ftpmips.helmholtz-muenchen.de/plants/brachypodium/v1.2/brachypodium_1.2_CDS.fa",
-#               destfile = refGenomesNucl$Bd_R )
-# download.file("ftp://ftpmips.helmholtz-muenchen.de/plants/barley/public_data/genes/barley_HighConf_genes_MIPS_23Mar12_CDSSeq.fa",
-#               destfile = refGenomesNucl$Hv_R )
 
 #
 # Download outgroup reference species
@@ -208,12 +200,16 @@ outGroupGenomesNucl <- list(
 # NOTE: There are multiple isoforms in these annotations..
 
 # Dowloaded files:
+# ftp://ftpmips.helmholtz-muenchen.de/plants/brachypodium/v1.2/brachypodium_1.2_Protein_representative.fa
+# ftp://ftpmips.helmholtz-muenchen.de/plants/brachypodium/v1.2/brachypodium_1.2_CDS.fa
+# ftp://ftpmips.helmholtz-muenchen.de/plants/barley/public_data/genes/barley_HighConf_genes_MIPS_23Mar12_ProteinSeq.fa
+# ftp://ftpmips.helmholtz-muenchen.de/plants/barley/public_data/genes/barley_HighConf_genes_MIPS_23Mar12_CDSSeq.fa
 # ftp://ftpmips.helmholtz-muenchen.de/plants/sorghum/sorghum1.4Proteins.fa
 # ftp://ftpmips.helmholtz-muenchen.de/plants/sorghum/sorghum1.4CDS.fa
-# ftp://ftp.maizesequence.org/pub/maize/release-5b/working-set/ZmB73_5a_WGS_cds.fasta.gz
-# ftp://ftp.maizesequence.org/pub/maize/release-5b/working-set/ZmB73_5a_WGS_translations.fasta.gz
 # ftp://ftpmips.helmholtz-muenchen.de/plants/rice/rap2BestGuessCds.fa
 # ftp://ftpmips.helmholtz-muenchen.de/plants/rice/rap2Protein.fa
+# ftp://ftp.maizesequence.org/pub/maize/release-5b/working-set/ZmB73_5a_WGS_cds.fasta.gz
+# ftp://ftp.maizesequence.org/pub/maize/release-5b/working-set/ZmB73_5a_WGS_translations.fasta.gz
 
 
 
