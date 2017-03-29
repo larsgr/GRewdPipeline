@@ -1,0 +1,433 @@
+---
+title: "DE strategy robustness"
+output: html_document
+---
+
+### Aim of this analysis
+
+Test to what extent our DE strategy is robust. I.e. Using all "supergene" expression values when fitting the model followed by contrast tests. 
+
+In some species, i.e. StLa and NaSt there are only a single sample for D0 and D1, so that the short term cold reponse effect is based on the difference between two samples with no replicates. This is deemed insufficient to determine statistically significant DE. MeNu1 on the other hand has plenty of replicates and would be deemed to be sufficient.
+
+
+```{r loadLibraries, echo=FALSE, message=FALSE}
+library(DESeq2)
+library(BiocParallel)
+library(gplots)
+
+BPparam <- MulticoreParam(workers = 20)
+```
+
+```{r loadData, echo=FALSE}
+orthoPath <- "/mnt/NOBACKUP/mariansc/share/orthos"
+
+expr <- readRDS("~/GRewd/pipeline/data/superExprMatrix.RDS") # from superGeneModel.Rmd
+
+```
+
+```{r calcNewDE, echo=FALSE}
+spcs <- c("BrDi","HoVu","MeNu1","StLa","NaSt")
+spcs <- setNames(spcs,spcs)
+
+TtoF <- c(`T-1`="ramp0",T0="peak0",T1="peak1",T3="ramp1",T4="ramp1")
+
+colData <- as.data.frame(stringr::str_split_fixed(colnames(expr),"\\.",4)[ ,1:3])
+names(colData) <- c("spcPop","timePoint","mix")
+colData$spc <-  as.factor(stringr::str_extract(colData$spcPop,paste(spcs,collapse="|")))
+
+colData$sf <- as.factor(paste0(colData$spc,TtoF[as.character(colData$timePoint)]))
+
+
+dds <- DESeqDataSetFromMatrix(countData = round(expr),
+                              colData = colData,
+                              design = formula(~ sf ))
+  
+dds <- DESeq(dds,parallel = T,BPPARAM = BPparam)
+
+ddsFull <- dds
+```
+
+```{r}
+includeSamplesT4 <- colData$mix=="ind" & colData$timePoint =="T4"
+includeSamplesMn <- colData$mix=="ind" & colData$spc =="MeNu1"
+
+
+x <- counts(ddsFull,normalized = T)[ ,includeSamplesT4]
+
+do.call(cbind,tapply(colnames(x),colData$spc[includeSamplesT4,drop=T],function(cols){
+  log2(apply(x[,cols],1,mean))
+})) -> meansT4
+
+do.call(cbind,tapply(colnames(x),colData$spc[includeSamplesT4,drop=T],function(cols){
+  apply(log2(x[,cols]),1,var)
+})) -> varsT4
+
+x <- counts(ddsFull,normalized = T)[ ,includeSamplesMn]
+
+do.call(cbind,tapply(colnames(x),colData$timePoint[includeSamplesMn,drop=T],function(cols){
+  log2(apply(x[,cols],1,mean))
+})) -> meansMn
+
+do.call(cbind,tapply(colnames(x),colData$timePoint[includeSamplesMn,drop=T],function(cols){
+  apply(log2(x[,cols]),1,var)
+})) -> varsMn
+
+
+idx <- sample(1:8633,50)
+cor.test(vars$HoVu[idx],vars$MeNu1[idx],method = "spearman")
+cor.test(means$HoVu[idx],means$MeNu1[idx],method = "spearman")
+plot(rank(vars$HoVu[idx]),rank(vars$MeNu1[idx]))
+
+
+mapply(function(vars,means){
+  sapply(colnames(vars),function(i1){
+    sapply(colnames(vars),function(i2){
+      idx <- !is.na(vars[ ,i1]) & !is.nan(vars[ ,i1]) & vars[ ,i1] < 5 & means[ ,i1] > 7 &
+         !is.na(vars[ ,i2]) & !is.nan(vars[ ,i2]) & vars[ ,i2] < 5 & means[ ,i2] > 7
+      
+      cor(vars[idx, i1],vars[idx, i2],method = "spearman")
+    })
+  })
+}, vars=list(varsMn,varsT4), means=list(meansMn,meansT4))
+
+idx <- !is.na(vars[ ,i1]) & !is.nan(vars[ ,i1]) & vars[ ,i1] < 5 & means[ ,i1] > 7 &
+       !is.na(vars[ ,i2]) & !is.nan(vars[ ,i2]) & vars[ ,i2] < 5 & means[ ,i2] > 7
+
+
+cor(vars[idx, i1],vars[idx, i2],method = "spearman")
+
+
+ggplot(data.frame(means=means$HoVu[idx],vars=log2(vars$HoVu[idx])),aes(x=vars)) + 
+  geom_density()
+
+cor(vars[[spc1]][idx],vars[[spc2]][idx],method = "spearman")
+
+ggplot(data.frame(varNs=log2(vars$NaSt[idx]),varHv=log2(vars$HoVu[idx])),aes(x=varNs,y=varHv)) + 
+  geom_point() + geom_density2d()
+
+mean(log2(vars$HoVu[idx]))
+rnorm()
+# do 
+```
+
+
+```{r}
+# exclude the MeNu1 peak samples that are not pooled
+excludeSamples <- colData$sf %in% c("MeNu1peak0","MeNu1peak1") & colData$mix=="ind"
+
+dds <- DESeqDataSetFromMatrix(countData = round(expr[ ,!excludeSamples]),
+                              colData = colData[!excludeSamples, ],
+                              design = formula(~ sf ))
+  
+dds <- DESeq(dds,parallel = T,BPPARAM = BPparam)
+
+ddsMeNuPooled <- dds
+```
+
+
+```{r}
+# exclude all but a single of the MeNu1 peak samples that are not pooled
+
+lapply(1:3, function(i){
+  excludeSamples <- colData$sf %in% c("MeNu1peak0","MeNu1peak1")
+  includeSamples <- c(which(colData$sf == "MeNu1peak0" & colData$mix=="ind")[i],
+                      which(colData$sf == "MeNu1peak1" & colData$mix=="ind")[i])
+  idx <- sort(c(which(!excludeSamples),includeSamples))
+  
+  dds <- DESeqDataSetFromMatrix(countData = round(expr[ ,idx]),
+                              colData = colData[idx, ],
+                              design = formula(~ sf ))
+  
+  DESeq(dds,parallel = T,BPPARAM = BPparam)
+}) -> ddsMeNuSingle
+
+```
+
+
+```{r}
+includeSamples <- colData$sf %in% c("MeNu1peak0","MeNu1peak1") & colData$mix=="ind"
+
+dds <- DESeqDataSetFromMatrix(countData = round(expr[ ,includeSamples]),
+                              colData = colData[includeSamples, ],
+                              design = formula(~ sf ))
+  
+dds <- DESeq(dds,parallel = T,BPPARAM = BPparam)
+
+ddsMeNuSimple <- dds
+
+
+
+```
+
+```{r}
+# collect results
+
+# short term all species
+lapply(spcs, function(spc){
+  results(ddsFull, contrast=c("sf",paste0(spc,"peak1"),paste0(spc,"peak0")))  
+}) -> resFull
+
+# variants of short term MeNu
+
+resMeNu <-
+  list(
+    pooled = results(ddsMeNuPooled, contrast=c("sf","MeNu1peak1","MeNu1peak0")),
+    single1 = results(ddsMeNuSingle[[1]], contrast=c("sf","MeNu1peak1","MeNu1peak0")),
+    single2 = results(ddsMeNuSingle[[2]], contrast=c("sf","MeNu1peak1","MeNu1peak0")),
+    single3 = results(ddsMeNuSingle[[3]], contrast=c("sf","MeNu1peak1","MeNu1peak0")),
+    classic = results(ddsMeNuSimple, contrast=c("sf","MeNu1peak1","MeNu1peak0"))
+  )
+
+resMeNu$full <- resFull$MeNu1
+
+```
+
+```{r}
+sigSTI <- lapply(resFull, with, { ifelse(is.na(padj), F, padj < 0.05 & log2FoldChange > 1) })
+sigSTIMeNu <- lapply(resMeNu, with, { ifelse(is.na(padj), F, padj < 0.05 & log2FoldChange > 1) })
+
+```
+
+```{r}
+venn(lapply(sigSTI,which))
+```
+
+```{r}
+
+plotOverlap(sigSTIMeNu[-6],FUN = oddsRatioZ,xlab = "Z-score")
+plotOverlap(sigSTI,FUN = oddsRatio,xlab = "odds ratio")
+plotOverlap(sigSTI,FUN = oddsRatioFisher,xlab = "Z-score")
+plotOverlap(c(sigSTIMeNu[-6],sigSTI[-3]),FUN = oddsRatioZ,xlab = "Z-score")
+
+
+```
+
+
+```{r}
+myOuter <- function(X,Y=X,FUN){
+  apply(X,2,function(x){
+    apply(Y,2,function(y){
+      FUN(x,y)
+    })
+  })
+}
+
+nBoth <- function(m){
+  myOuter(m,FUN=function(x,y){ sum(x & y) })
+}
+
+oddsRatio <- function(m){
+  n11 <- myOuter(m,FUN=function(x,y){ sum( x &  y) })
+  n00 <- myOuter(m,FUN=function(x,y){ sum(!x & !y) })
+  n10 <- myOuter(m,FUN=function(x,y){ sum( x & !y) })
+  n01 <- myOuter(m,FUN=function(x,y){ sum(!x &  y) })
+
+  (n00*n11)/(n10*n01)
+}
+
+oddsRatioSE <- function(m){
+  n11 <- myOuter(m,FUN=function(x,y){ sum( x &  y) })
+  n00 <- myOuter(m,FUN=function(x,y){ sum(!x & !y) })
+  n10 <- myOuter(m,FUN=function(x,y){ sum( x & !y) })
+  n01 <- myOuter(m,FUN=function(x,y){ sum(!x &  y) })
+
+  sqrt(1/n00 + 1/n11 +1/n10 + 1/n01)
+}
+
+oddsRatioZ <- function(m){
+  log(oddsRatio(m))/oddsRatioSE(m)
+}
+
+pnorm(6.342536,lower.tail = F)
+
+oddsRatioFisher <- function(m){
+  retVal <- matrix( 0, ncol=ncol(m), nrow=ncol(m), dimnames=list(colnames(m),colnames(m)))
+  
+  retVal[lower.tri(retVal)] <-
+    list(
+      n11 = myOuter(m,FUN=function(x,y){ sum( x &  y) }),
+      n10 = myOuter(m,FUN=function(x,y){ sum( x & !y) }),
+      n01 = myOuter(m,FUN=function(x,y){ sum(!x &  y) }),
+      n00 = myOuter(m,FUN=function(x,y){ sum(!x & !y) })
+    ) %>% 
+    map( ~ .x[lower.tri(.x)]) %>% 
+    pmap( c ) %>% 
+    map( matrix, nrow=2) %>% 
+    map( fisher.test, alternative="greater") %>% 
+    map_dbl( ~ .x$estimate)
+  
+  return(retVal)
+}
+
+
+pmap(list(n11,n10,n01,n00),c)
+
+x <- fisher.test(matrix(c(136,308,533,7656),nrow=2),alternative="greater")
+x$estimate
+
+plotOverlap <- function(sigList, FUN=oddsRatio, xlab="Odds ratio"){
+  m <- do.call(cbind,sigList)
+  plotTriMat(labelMat=nBoth(m),valueMat = FUN(m), xlab=xlab)
+}
+
+plotTriMat <- function(labelMat,valueMat,xlab){
+  valRange <- range(pretty(valueMat[lower.tri(valueMat)]))
+#   valColors <- colorRampPalette(c("#FFEDA0","#FEB24C","#F03B20"))(100)
+  valColors <- colorRampPalette(RColorBrewer::brewer.pal(7,"YlGnBu")[1:5])(100)
+  valBreaks <- seq(valRange[1],valRange[2],length.out = 101)
+  
+  colorMat = matrix( cut(valueMat, labels=valColors, breaks=valBreaks), nrow=nrow(valueMat))
+  
+  n <- ncol(valueMat)
+  
+  layout(mat = matrix(1:2,ncol=1),heights = c(3,1))
+  par(mar=c(0,1,2,1)+0.1)
+  plot.new()
+  plot.window( xlim=c(-5,n), ylim=c(-0.5,2*n-1.5), asp=1 )
+  x=c(-1,0,1,0);y=c(0,1,0,-1)
+  for(i in 1:n){
+    for(j in 1:i){
+      cellCenterX <- i-j
+      cellCenterY <- 2*n - (i+j)
+      if(i != j){
+        polygon(x = cellCenterX+x, cellCenterY+y,border = "black",col = colorMat[i,j])
+        text(x = cellCenterX, y = cellCenterY-0.4, labels = signif(valueMat[i,j],digits = 3),cex=0.8)
+      }
+      text(x = cellCenterX, y = cellCenterY, labels = labelMat[i,j])
+    }
+  }
+
+  # plot species names in italic
+  for(i in 1:n){
+    text(x = -1, y = 2*(n-i),adj = c(1,0.5), 
+         labels = substitute(italic(s),list(s=colnames(labelMat)[i])))
+  }
+  
+  title(main="Pairwise intersect of DEGs")
+
+  par(mar=c(4,6,1,6)+0.1)
+  image(x = valBreaks,z = matrix(valBreaks,ncol=1),col=valColors,
+        yaxt = "n", xlab=xlab)
+
+  par(mar=c(5, 4, 4, 2) + 0.1)
+  layout(1)
+}  
+```
+
+## Pooled sample variance test
+
+Among the samples there are 10 species/timpoint combinations that have exactly 1 pooled and 3 individual replicates. These can be used to test the pooling strategy, i.e. whether the pooled samples have less variance than individual samples. By sorting the expression level of an indivual gene among the 3+1 replicates we would expect the pooled replicate to end up in the middle if it has lower variance. The figure below shows the distribution of ranks of the pooled replicate. It shows that 6 out of 10 behaves as expected, i.e. mostly rank 2-3, while 4 (Stipa T4, Nardus T4, BrDi T3 og Melica T1) seem to have higher or equal variance in the pooled samples.
+
+```{r pooledVariance}
+hasTbl <- 
+  colData %>%
+  group_by(spc, timePoint) %>%
+  summarise(has3ind1mix = (sum(mix=="ind")==3 & sum(mix=="mix")==1)) %>%
+  filter(has3ind1mix) %>%
+  mutate(spcT=paste(spc,timePoint,sep="."))
+
+includeSamples <-
+  colData %>% transmute(spcT=paste(spc,timePoint,sep=".")) %>%
+  .$spcT %in% hasTbl$spcT
+
+
+x <- counts(ddsFull,normalized=T)[,includeSamples]
+
+
+tapply(colnames(x),sub("(.*)\\.(mix|ind)..","\\1",colnames(x)),function(sampleID){
+  y <- x[ ,sort(sampleID)]
+  z <- t(apply(y,1,rank,ties.method="random"))
+  table(z[ ,4])
+}) -> tbls
+
+do.call(rbind,tbls) %>% 
+  as_data_frame() %>% 
+  mutate(sampleID=names(tbls)) %>% 
+  gather(c(1:4),key="rank",value = "count") %>% 
+  mutate(rank=as.integer(rank)) %>% 
+  ggplot( aes(x=rank,y=count,color=sampleID)) + 
+  geom_line()
+
+
+```
+
+## sample clustering
+
+Large points indicate pooled samples. In the first plot the pooled samples tend to have a bit shorter branches (indicating less noise) and they tend to bunch between the individual replicates. The Stipa T4(W9) and Nardus T4(W9) samples that seemed to have higher variance seem to fall outside the bunch of individual samples. In the second plot the individual replicates are averaged for each spcs/timepoint. Here the averaged individual replicates tend to have shorter branches than the pooled indicating that they have less variance, although this is slighlty biased by subtracting the means. The third and fourth plot have not subtracted the means and in the last plot the mean of the individuals are not shorter than the pooled.
+
+All in all it seems that average of individual replicates makes them closer to the pooled samples in most cases, indicating that the pooled samples has less of the within species variance.
+
+```{r sampleTree}
+library(ape) # plot.phylo
+library(phangorn) # NJ
+
+# Species names to show in plots
+spcID2spcName <- c( BrDi="B. distachyon", HoVu="H. vulgare", MeNu1="M. nutans",
+                    StLa="S. lagascae", NaSt="N. stricta")
+
+# define species colors to use in plots
+spcColors <- c( NaSt = "#0049dbff",
+                StLa = "#ff0000ff",
+                MeNu1 = "#cd28e3ff",
+                BrDi = "#00c500ff",
+                HoVu = "#ff7e00ff")
+
+vst <- readRDS("~/GRewd/pipeline/data/VSTnew.RDS")
+
+sampleDesc <- read.table(text=colnames(vst),sep=".",col.names=c("spc","timepoint","pooled","rep"))
+sampleDesc$spcColor <- spcColors[spcID2spcName[sampleDesc$spc]]
+sampleDesc$spcName <- spcID2spcName[sampleDesc$spc]
+sampleDesc$timePch <- c("-",1,2,3,4)[sampleDesc$timepoint]
+sampleDesc$timeColor <- RColorBrewer::brewer.pal(11,"Spectral")[c(1,4,7,9,11)][sampleDesc$timepoint]
+
+filterLowExpr <- apply(vst>3,1,all)
+
+Reduce(cbind, sapply(unique(sampleDesc$spc),function(spc){
+  isSpc <- sampleDesc$spc==spc
+  # get mean per timepoint
+  sapply(as.character(unique(sampleDesc$timepoint[isSpc])),function(timePoint){
+    rowMeans(vst[ ,isSpc & (sampleDesc$timepoint==timePoint), drop=F])
+  }) -> tpMeans
+  #   # BrDi doesn't have T4.. does it help to use T3 as T4?
+  #   if(!("T4" %in% colnames(tpMeans))){
+  #     tpMeans <- cbind(tpMeans,T4=tpMeans[ ,"T3"]) # copy T3 where T4 is missing in Brachy
+  #   }
+  
+  # For each species, subtract mean of timepoint means
+  vst[ ,isSpc] - rowMeans(tpMeans)
+})) -> x
+
+
+meanReps <- function(z){
+  # calculate mean of individual replicates
+  tapply(colnames(z),sub(".[0-9]$","",colnames(z)), function(sampleID){
+    rowMeans(z[,sampleID,drop=F])
+  }) -> y
+  
+  do.call(cbind,y)
+}
+
+plotSampleTree <- function(z){
+  dm <- dist(t(z),method = "manhattan")
+  tree <- NJ(dm)
+  
+  plot.phylo(tree, type="u", show.tip.label = F,
+             tip.color=spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))],
+             cex = 1)
+  
+  newTimepoints <- c(`T-1`="W0",T0="D0",T1="D1",T3="W4",T4="W9")
+  tiplabels( frame = "none", text = newTimepoints[sub(".*(T-?[0134]).*","\\1",tree$tip.label,perl=T)],
+             col=spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))])
+  tiplabels( pch=20,cex=ifelse(grepl("mix",tree$tip.label),2,0.8))
+  legend("bottomleft",legend = names(spcColors),text.col = spcColors, y.intersp = 0.8,bty = "n" )
+}
+
+plotSampleTree(x[filterLowExpr, ])
+plotSampleTree(meanReps(x[filterLowExpr, ]))
+plotSampleTree(vst[filterLowExpr, ])
+plotSampleTree(meanReps(vst[filterLowExpr, ]))
+
+
+```
+
+

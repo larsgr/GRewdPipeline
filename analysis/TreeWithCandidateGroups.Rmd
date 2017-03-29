@@ -149,12 +149,12 @@ branchNodeNr <- match(colnames(hSig),spcTree$node.label) + length(spcTree$tip.la
 branchEdgeNr <- setNames( match(branchNodeNr,spcTree$edge[ ,2]), colnames(hSig) )
 
 # Species names
-spcLabels <- c( Os_R = "Oryza",
-                NaSt = "Nardus",
-                StLa = "Stipa",
-                MeNu1 = "Melica",
-                BrDi = "Brachypodium",
-                HoVu = "Hordeum") #,LoPe = "Lolium")
+spcLabels <- c( Os_R = "O. sativa",
+                NaSt = "N. stricta",
+                StLa = "S. lagascae",
+                MeNu1 = "M. nutans",
+                BrDi = "B. distachyon",
+                HoVu = "H. vulgare") #,LoPe = "Lolium")
 
 
 svg(filename = "~/GRewd/pipeline/articleFigures/FigureGO_SpcTree.svg",

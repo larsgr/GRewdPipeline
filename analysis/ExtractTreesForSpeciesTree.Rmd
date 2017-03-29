@@ -55,7 +55,12 @@ paralogsWithAllOut <- goodTreeStats$allSpcAreClans & goodTreeStats$isCoreClan &
 3. At least one sequence in NaSt, StLa, MeNu, Bd_R, Hv_R, Os_R, Sb_R and Zm_R (`r sum(paralogsWithAllOut)`). Resolve the paralogs by selecting the first (random?) paralog only.
 
 ### Adding trees withouth core/basal split
-It was found that filtering on core/basal split existance could bias the estimated species tree. Therefore we added the this groups that also holds the condition in alternative 1 above (`r sum(singletonWithOsNoCoreClan)`)
+
+It was found that filtering on core/basal split existance could bias the estimated species tree. By removing this requirement we add another `r sum(singletonWithOsNoCoreClan)` trees that also holds the condition in alternative 1 above (total: `r sum(singletonWithOsNoCoreClan)+sum(singletonWithOs)`). I.e. the final conditions that were used:
+
+* Exactly one sequence in NaSt, StLa, MeNu, Bd_R, Hv_R and Os_R. 
+* Os_R must be out-group
+* No filter on the structure within the pooideae
 
 
 ### Extract codon alignments
@@ -252,7 +257,7 @@ createSLURMarray(commandListFile,arraySize=150,
                  jobName="BigBeast")
 ```
 
-```{r simenScripts, OLD funker ikke }
+```{r simenScripts_OLD_funker_ikke, eval=FALSE, echo=FALSE }
 library(plyr)
 library(ape)
 
@@ -364,7 +369,7 @@ setwd(home)
 
 ```
 
-```{r Simen Script, NEW funker}
+```{r SimenScript_NEW_funker, eval=FALSE, echo=FALSE}
 library(plyr)
 library(ape)
 

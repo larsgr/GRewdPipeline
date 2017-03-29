@@ -47,6 +47,9 @@ goodGrps <- OrthoGrpTableToArray(goodGrpsTbl)
 # load DE
 load(file.path(orthoPath,"DESeq/DE.RData"))
 
+# load DEmat based based on superGenes
+DEmat <- readRDS("~/GRewd/pipeline/data/DEmat.RDS")  # from: superGeneModel.Rmd
+
 ```
 
 ### Mapping barley contigs to our sequences
@@ -112,14 +115,18 @@ Hv_bres$martMap <- martMap$Gene.stable.ID[match(Hv_bres$qseqid, martMap$Affymetr
 ```{r showTable,echo=F, results="asis"}
 fc <- annotTbl$Dicktoo_Chill_logFC[ match(Hv_bres$qseqid,annotTbl$Contig) ]
 idxOrder <- order(fc)
-
-knitr::kable(cbind(grpId = Hv_bres$grpID,
+Hv_bres$isSuper <- Hv_bres$grpIDgood %in% rownames(DEmat$peak$pVal)
+knitr::kable(cbind(grpId = ifelse(is.na(Hv_bres$grpIDgood),Hv_bres$grpID,
+                                  paste0(Hv_bres$grpIDgood,ifelse(Hv_bres$isSuper,"**","*"))),
                    Hv_R = sub("Hv_R\\|","",Hv_bres$sseqid),
                    mart = Hv_bres$martMap,
                    seqIDmat,
                    Annotation = annotTbl$alt_annotation[ match(Hv_bres$qseqid,annotTbl$Contig)])[rev(idxOrder),])
 ```
 
+
+(*) group is good
+(**) group is super, i.e. HCOG
 
 ### Heatmap with best hit
 
@@ -130,11 +137,11 @@ Heatmap of peak log fold-change. Grey means not significant (padj>0.05 or |lfc|<
 
 
 sapply( c("BrDi","HoVu","MeNu1","StLa","NaSt"), function(spc){
-  DE[[spc]]$resRamp$log2FoldChange[match(sub("[^|]*\\|","",seqIDmat[,spc]), rownames(DE[[spc]]$resRamp))]
+  DE[[spc]]$resPeak$log2FoldChange[match(sub("[^|]*\\|","",seqIDmat[,spc]), rownames(DE[[spc]]$resPeak))]
 }) -> lfcMat
 
 sapply( c("BrDi","HoVu","MeNu1","StLa","NaSt"), function(spc){
-  DE[[spc]]$resRamp$padj[match(sub("[^|]*\\|","",seqIDmat[,spc]), rownames(DE[[spc]]$resRamp))]
+  DE[[spc]]$resPeak$padj[match(sub("[^|]*\\|","",seqIDmat[,spc]), rownames(DE[[spc]]$resPeak))]
 }) -> padjMat
 
 padjMat[is.na(padjMat)] <- 1
@@ -176,6 +183,45 @@ invisible(dev.off())
 
 ```
 
+```{r heatmapAllNoPval, echo=FALSE,dev='svg',fig.height=7,fig.width=7}
+
+
+sigMat <- lfcMat
+
+
+rownames(sigMat) <- annotTbl$alt_annotation[ match(Hv_bres$qseqid,annotTbl$Contig) ]
+fc <- annotTbl$Dicktoo_Chill_logFC[ match(Hv_bres$qseqid,annotTbl$Contig) ]
+# FCcols <- as.character( cut(fc,breaks=c(-20,seq(-5.5,5.5,by=1),20),
+#                             labels=colorRampPalette(c("blue","lightgrey","red"))(13) ) )
+FCcols <- as.character( cut(fc,breaks=c(-20,-4:-1,1:4,20),
+                            labels=colorRampPalette(c("blue","lightgrey","red"))(9)))
+
+idxOrder <- order(fc)
+# heatmap(statMat[idxOrder, ], breaks=c(-20,seq(-5.5,5.5,by=1),20),
+#         col=colorRampPalette(c("green","black","red"))(13),
+#         RowSideColors=FCcols[idxOrder],
+#         scale="none", Rowv = NA, Colv = NA, main="Peak stat of Barley LTI genes")
+
+m <- sigMat[idxOrder, c(2,1,3:5)]
+colnames(m) <- c("Hordeum","Brachypodium","Melica","Stipa","Nardus")
+
+
+heatmap(m, breaks=c(-20,-4:-1,1:4,20),cexRow = 1.2,
+        col=colorRampPalette(c("blue","lightgrey","red"))(9),
+        RowSideColors=FCcols[idxOrder], margins=c(10,40),
+        scale="none", Rowv = NA, Colv = NA, main="Peak fold change of Greenup genes")
+
+# to file
+# svg(filename = "~/GRewd/pipeline/articleFigures/compareGreenupHeatmap.svg",width = 7,height = 7)
+# heatmap(m, breaks=c(-20,-4:-1,1:4,20),cexRow = 1.2,
+#         col=colorRampPalette(c("blue","lightgrey","red"))(9),
+#         RowSideColors=FCcols[idxOrder], margins=c(10,40),
+#         scale="none", Rowv = NA, Colv = NA, main="Peak fold change of Greenup genes")
+# invisible(dev.off())
+
+```
+
+
 ```{r colorLegend, echo=FALSE}
 # # color legend:
 #
@@ -186,6 +232,171 @@ axis(1,at = c(-4,-2,0,2,4))
 invisible(dev.off())
 ```
 
+### Why are 22 out of 33 not in HCOG?
+
+First lets take a look at the good orthogroups that passed the first filtering but failed the following filtering criteria:
+
+* Group must contain at least 3 of our 5 species (nDenovo)
+* Paralogs in each species must form a monophyletic clade (i.e. no duplications before species split) (allSpcAreClans)
+* Core species (Brachy, Hordeum and Lolium) must form a monophyletic clade (isCoreClan)
+
+```{r goodButNotSuper, echo=FALSE}
+grpData <- readRDS(file.path(orthoPath,"splitGroups/goodTreeStats.rds"))
+
+grpIds <- Hv_bres$grpIDgood[!is.na(Hv_bres$grpIDgood) & !Hv_bres$isSuper ]
+
+goodLens <- unlist(lapply(goodGrps,length))
+dim(goodLens) <- dim(goodGrps)
+dimnames(goodLens) <- dimnames(goodGrps)
+nDenovo <- rowSums(goodLens[,c("HoVu","BrDi","MeNu1","StLa","NaSt")]>0)
+
+knitr::kable(row.names = F,cbind(grpID=grpIds,nDenovo = nDenovo[grpIds], grpData[grpIds,c("allSpcAreClans","isCoreClan")]))
+
+```
+
+All orthogroups failed the core clan filter! Lets look at theri gene trees to see why (red triangle = low bootstrap support, black dot size = base expression level):
+
+```{r plotGoodButNotSuperTrees, echo=FALSE, fig.width=5}
+library(ape)
+goodTrees <- readRDS(file.path(orthoPath,"splitGroups/goodTrees.rds"))
+
+
+for( grpID in grpIds){
+  tree <- goodTrees[[grpID]]
+  plot.phylo(tree,main=grpID)
+  mtext(annotTbl$alt_annotation[ match(Hv_bres$qseqid[match(grpID,Hv_bres$grpIDgood)],annotTbl$Contig) ])
+  nodelabels(pch=17,cex=2-2*(as.numeric(tree$node.label)/100),
+             col=colorRampPalette(c("black","magenta","red","yellow","green"))(100)[as.numeric(tree$node.label)])
+
+  spc <- sub("\\|.*$","",tree$tip.label)
+  seqID <- sub("^.*\\|","",tree$tip.label)
+  mapply(spc,seqID, FUN = function(spc,seqID){
+    if(spc %in% names(DE)){
+      return( log2(1+DE[[spc]]$resPeak[seqID,"baseMean"]) )
+    } else {
+      return(NA)
+    }
+  }) -> expLevel
+  tiplabels(pch=20,cex=expLevel/10) 
+}
+```
+
+* grp117831 - Hv is in the wrong place in the tree and several species are missing. Not sure whats wrong. Possibly two different gene lineages that was merged but lack of outgroups made them difficult to split. Quicly evolving gene.
+* grp114078 - This group only has a slightly wrong topology. Probably should have been included.
+* grp112539.1 - Ensembl reports a duplication in core pooideae [link](http://plants.ensembl.org/Hordeum_vulgare/Gene/Compara_Tree?g=MLOC_11294;r=4:252492473-252493245;t=MLOC_11294.1;collapse=7516044,7516008,7516037,7516060,7516062,7516097,7516206). It does not correspond well with the placement of Ns and Mn in our tree.
+* grp107830 - Low expression except NaSt. HoVu clusters with NaSt (possible contamination?). No duplications in [ensembl](http://plants.ensembl.org/Hordeum_vulgare/Gene/Compara_Tree?db=core;g=MLOC_14295;r=2HL_unordered:610390-611813;t=MLOC_14295.2;collapse=8404027,8404016) basal denovo show many paralogs (assembling artifacts?) No probe mapping in ensembl.
+* grp107364 - Has messed up order in the pooid topology but no apparent duplications (tree inference/alignment problem?)
+* grp101621 - Apparently multiple duplication events. Supported by [ensembl](http://plants.ensembl.org/Brachypodium_distachyon/Gene/Compara_Tree?g=BRADI1G51800;r=1:50278617-50279025;t=BRADI1G51800.1;collapse=6711065,6711063) 
+* grp100055.7 - This group only has a slightly wrong topology. Probably should have been included.
+
+Now lets take a look at the 15 orthogroups that failed the first filter
+
+```{r badGroupsTable, echo=FALSE}
+grpIds <- Hv_bres$grpID[is.na(Hv_bres$grpIDgood)]
+
+lens <- unlist(lapply(grps,length))
+dim(lens) <- dim(grps)
+dimnames(lens) <- dimnames(grps)
+
+grpIds[is.na(Hv_bres$martMap[match(grpIds,Hv_bres$grpID)])]
+
+table(rowSums(lens[grpIds ,c("Os_R","Zm_R","Sb_R")]))
+
+# table of grp size
+knitr::kable(cbind(grpID=paste0(grpIds,ifelse(is.na(Hv_bres$martMap[match(grpIds,Hv_bres$grpID)]),"(!)","")),
+                   lens[grpIds,c("LoPe","HoVu","Hv_R","BrDi","Bd_R","MeNu1","StLa","NaSt","Os_R","Sb_R","Zm_R" )],
+                   annotTbl$alt_annotation[ match(Hv_bres$qseqid[match(grpIds,Hv_bres$grpID)],annotTbl$Contig)]),
+             row.names = F)
+
+```
+
+(!) Probe mapping missing in ensembl
+
+8/15 has no outgroups, which excludes them from HCOG. Could be because they are pooideae unique or could be orthoMCL splitting. 
+
+For example grp128840 (WCOR615) and grp117672 (WRAB17) is part of the same complex [tree in ensembl compara](http://plants.ensembl.org/Hordeum_vulgare/Gene/Compara_Tree?g=MLOC_13520;r=4:519608128-519609157;t=MLOC_13520.1;collapse=8517644) with many duplications. OrthoMCL split the gene family into four groups: grp117672 (WRAB17) and grp128840(WCOR615) which have no out-group, are both in the greenup list and both have basal orthologs (i.e. duplications probably happened before the core split), but only cold responsive in core; grp102307 which seemingly has many duplications, has a valid outgroup, but invalid topology; and grp108033 which has a valid outgroup, but invalid topology. We can safely conclude that the reason why these genes didn't qualify as HCOG was that the gene family is subject to repeated duplications and deletions, but these duplications are not limited to core pooideae.
+
+Also grp109577, grp142169 and grp184444 (IRIPs) are part of the same [ensembl tree](http://plants.ensembl.org/Hordeum_vulgare/Gene/Compara_Tree?g=MLOC_4406;r=5:544371612-544373290;t=MLOC_4406.1)
+
+* grp184444 - IRIP, not HCOG because duplications
+* grp142169 - IRIP, not HCOG because duplications
+* grp128840 - WCOR615, not HCOG because duplications
+* grp122930 - only found in nardus among the denovo species (maybe not expressed?).
+* grp120420 - Aquaporin, probably not HCOG because duplications
+* grp120393 - probably not HCOG because duplications in pooideae
+* grp117890 - WCS19, has [no orthologs outside pooideae according to ensembl](http://plants.ensembl.org/Hordeum_vulgare/Gene/Compara_Tree?g=MLOC_42873;r=2:571806360-571807144;t=MLOC_42873.1)
+* grp117672 - WRAB17, not HCOG because duplications
+* grp111489 - tree is mysteriously missing for no good reason.
+* grp109577 - IRIP, not HCOG because duplications
+
+The remaining 5 groups have multiple out-groups and possibly failed to correctly split. Lets look at their tree topology:
+
+```{r def_plotComplexTrees, echo=FALSE}
+spc2cols <- c(HoVu="#5E4FA2",Hv_R="#5E4FA2",
+              LoPe="#3288BD",LoPeF="#3288BD",
+              BrDi="#66C2A5",Bd_R="#66C2A5",
+              MeNu1="#ABDDA4",
+              StLa="#E6F598",
+              NaSt="#FFFFBF",
+              Os_R="#F46D43",
+              Zm_R="#D53E4F",
+              Sb_R="#9E0142")
+
+spc2pch <- c(HoVu=20,Hv_R=1,
+              LoPe=3,LoPeF=4,
+              BrDi=20,Bd_R=1,
+              MeNu1=20,
+              StLa=20,
+              NaSt=20,
+              Os_R=5,
+              Zm_R=5,
+              Sb_R=5)
+
+ploTree <- function(grpID){
+  tree <- read.tree(paste0("/mnt/NOBACKUP/mariansc/share/orthos/treesNuc/",grpID,".cds_GTR+G+I_BS100.tree"))
+  plot.phylo(tree,type="u",show.tip.label = F,main=grpID)
+  nodelabels(pch=17,cex=2-2*(as.numeric(tree$node.label)/100),
+             col=colorRampPalette(c("black","magenta","red","yellow","green"))(100)[as.numeric(tree$node.label)])
+  cols <- spc2cols[sub("\\|.*$","",tree$tip.label)]
+  pch <- spc2pch[sub("\\|.*$","",tree$tip.label)]
+  tiplabels(pch = pch,
+            col=cols,cex=2)
+  return(tree)
+}
+```
+
+
+```{r plotCompexTrees, echo=FALSE,fig.height=7,fig.width=10}
+for(grpID in grpIds[11:15]){
+  tree <- ploTree(grpID)
+  legend("bottomleft",legend=names(spc2cols),pch=spc2pch,col=spc2cols)
+  mtext(annotTbl$alt_annotation[ match(Hv_bres$qseqid[match(grpID,Hv_bres$grpID)],annotTbl$Contig)])
+  seqID_R <- Hv_bres$sseqid[match(grpID,Hv_bres$grpID)]
+  seqIDs <- paste(colnames(seqIDmat),seqIDmat[match(grpID,Hv_bres$grpID),],sep="|")
+  tiplabels(tip = match(c(seqIDs,seqID_R),tree$tip.label), pch=6, cex=2)
+  par(xpd=T)
+  legend("bottom",legend = "Best probe blast hit", pch=6,pt.cex = 2,inset=c(0,-0.15))
+}
+```
+
+* grp102398 - split into grp102398.1 but best probe match for Barley reference is not in that clade. Also there is no probe mapping in ensembl. Probably the probe was designed on a gene that is missing in Barley. The [Ensembl tree](http://plants.ensembl.org/Hordeum_vulgare/Gene/Compara_Tree?g=MLOC_16176;r=4:244493566-244495413;collapse=11322642,11322403,11322395,11322470) shows two poaceae clades where one is missing the barley gene.
+* grp102069 - Weird topology with Rice in the middle. Possibly a failure to reconstruct the correct tree.
+* grp101877 - Only Melica among the denovo species. Possibly not expressed. 
+* grp100422 - (FFT1?) Not sure why this tree couldn't be split. But it clearly has massive gene expansion in core clade and and one duplication in pooideae. [ensembl tree](http://plants.ensembl.org/Hordeum_vulgare/Gene/Compara_Tree?g=MLOC_66445;r=6:8497680-8500609;t=MLOC_66445.1;collapse=12470037,12470546,12470614,12470555,12470503,12470617,12470531,12470438,12470527,12470551,12470450,12470035,12470448).
+* grp100139 - (Beta-fructofuranosidase INV1?)is split into grp100139.1 and grp100139.2 but should obviously have been split into more groups. The probe sequences match was not in any of the two split groups. [Ensembl gene tree](http://plants.ensembl.org/Hordeum_vulgare/Gene/Compara_Tree?g=MLOC_56998;r=2:493303994-493307994;collapse=12470370,12470373,12470617,12470437,12470035,12470039) shows many duplications in all grasses.
+
+
+#### Conclusion
+
+* 11/22 caused by duplications (FFT, IRIP, LEA, etc..)
+* 2/22 Accelerated evolution.. no known homologs outside grass
+* 2/22 not expressed in denovo
+* 2/22 low expression / contamination
+* 3/22 tree reconstruction fail (two has only slightly wrong topology and should probably have been included)
+* 1/22 microarray fail
+* 1/22 script fail
+
+Most of the genes that could not be mapped to HCOG's was because the gene belongs to a family with high duplication rate.
 
 ### Significance test
 

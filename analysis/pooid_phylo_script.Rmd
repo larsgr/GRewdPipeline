@@ -1,0 +1,212 @@
+---
+title: "pooid_phylo_script"
+author: "mariansc"
+date: "08/12/2015"
+output: html_document
+---
+
+```{r loadPhyloData, echo=FALSE}
+
+# Look into the Phylo_functions.R script to find the topo_count function. 
+# See below example for usage… 
+
+#source('/mnt/users/srsand/Salmon/Scripts_and_workflows/Rscript/Rfunctions/Phylo_functions.R') 
+source('/mnt/users/mariansc/Rfunctions/Phylo_functions.R')
+
+BEAST_con_trees <- list.files(path="/mnt/users/mariansc/Pooid_Phylo/SingletonConsensusTrees", pattern="*con.tre", full.names=TRUE)
+
+
+#tr = lapply(BEAST_con_trees, read.nexus) 
+#save(tr, file="tr.Rdata")
+
+#Start from here if you have done the above before
+load(file="/mnt/users/mariansc/Pooid_Phylo/tr.Rdata")
+
+#group1 <- c("Hv","Bd","Sl","Mn")
+#tr1 <- filter.mono(tr,group1)
+#group2 <- c("Hv","Bd")
+#tr2 <- filter.mono(tr1,group2)
+
+#tr <- tr2
+ash.topo = topo_count(tr) 
+ash.topo = ash.topo[order(sapply(ash.topo, '[[', 2), decreasing = T)] 
+
+#pdf("topology_overview.pdf", paper="a4")
+#par(mfrow=c(2,4), mar=c(1,1,3,1)) 
+#for(i in 1:length(ash.topo)) {
+#  plot(ash.topo[[i]]$tree, main=paste('Trees =', ash.topo[[i]]$count), cex=1.1) 
+#
+#  }
+#plot(ash.topo[1]$tree, type="n")
+#mtext(paste("Total # of trees:", length(BEAST_con_trees), sep=" "), padj=5) 
+#mtext(paste("filtered # of trees:", length(tr2), sep=" "), padj=7) 
+#dev.off()
+
+#node ages 
+
+edge_lengths <- sapply(tr, with, edge.length)
+
+coph_dist <- lapply(tr, cophenetic)
+coph_dist <- lapply(tr, cophenetic)
+Hv_Bd <- sapply(coph_dist, "[","Hv","Bd")/2
+Hv_Sl <- sapply(coph_dist, "[","Hv","Sl")/2
+Hv_Mn <- sapply(coph_dist, "[","Hv","Mn")/2
+Hv_MnSl <- c(sapply(coph_dist, "[","Hv","Mn")/2,sapply(coph_dist, "[","Hv","Sl")/2)
+Hv_Ns <- sapply(coph_dist, "[","Hv","Ns")/2
+nodes <- list(Hv_Bd,Hv_Sl,Hv_Mn,Hv_MnSl,Hv_Ns)
+names(nodes) <- c("Hv_Bd","Hv_Sl","Hv_Mn","Hv_MnSl","Hv_Ns")
+
+#defining functions
+#Two times SD
+sd2 <- function(x){2*sd(x)}
+#standard error of the mean
+std <- function(x){sd(x)/sqrt(length(x))}
+#95% coninfidence interval
+hci95 <- function(x){qnorm(0.975)*(sd(x)/sqrt(length(x)))}
+
+#mean of the nodeages
+nodeages <- data.frame(ageMean=sapply(nodes, mean),
+                       SD=sapply(nodes, sd),
+                       SD2=sapply(nodes, sd2),
+                       StdErr=sapply(nodes, std),
+                       HCI95=sapply(nodes, hci95))
+
+#plot tree with node bars
+grass.tree = read.tree(text="((((Barley:40.82,Brachypodium:40.82):3.99, Melica:44.81, Stipa:44.81):3.34,Nardus:48.15):4.85, Rice:53);")
+
+
+```
+
+```{r loadPaleoClimateData, echo=FALSE}
+
+mudel_deltas <- read.csv(file="/mnt/users/mariansc/Pooid_Phylo/delta_O18_mudel", header=TRUE, sep=" ")
+zachos_deltas <- read.csv(file="/mnt/users/mariansc/Pooid_Phylo/delta_O18_zachos.txt", header=TRUE, sep="\t")
+zachos_deltas <- zachos_deltas[1:3925,c(2,6)]
+colnames(zachos_deltas)<-cbind("Ma","permil")
+
+#Timescale after Gradstein 2004
+#Paleocene 65.5 - 55.8, mid=60.65
+#Eocene 55.8 - 33.9, mid=44.85
+#Oligocene 33.9 - 23.03, mid=28.46
+#Miocene 23.03 -5.33, mid=14.18
+#Pliocene  5.33-1.81, mid=
+#Pleistocene 1.81-0, mid=
+#old.par <- par()
+
+epochs <- c("Paleocene","Eocene","Oligocene","Miocene")
+
+```
+
+```{r loadGbifData, echo=FALSE}
+gbif <- list( Os=read.table("/mnt/users/mariansc/Pooid_Phylo/os.txt",sep="\t",header = T),
+              Ns=read.table("/mnt/users/mariansc/Pooid_Phylo/ns.txt",sep="\t",header = T),
+              Sl=read.table("/mnt/users/mariansc/Pooid_Phylo/sl.txt",sep="\t",header = T),
+              Mn=read.table("/mnt/users/mariansc/Pooid_Phylo/mn.txt",sep="\t",header = T),
+              Bd=read.table("/mnt/users/mariansc/Pooid_Phylo/bd.txt",sep="\t",header = T),
+              Hv=read.table("/mnt/users/mariansc/Pooid_Phylo/hv.txt",sep="\t",header = T))
+
+```
+
+
+```{r plotAll}
+svg(filename = "~/GRewd/pipeline/articleFigures/phyloComplex.svg",width = 14,height=7)
+
+layout(matrix(c(2,1,3,0),nrow=2), heights=c(5,3,5,3))
+
+########################
+# Paleoclimate
+#
+
+par(mar=c(4,4,0,0))
+plot( NULL, type="n", ylim=c(4.5,-0.4), xlim=c(65,0), axes = FALSE,  ylab="", xlab="", xaxs="i",yaxs="i")
+
+par(xpd=NA)
+epochX <- c(65,55.8,33.9,23.03,5.33)
+rect( xleft = epochX[1],xright = epochX[2],ytop = -10, ybottom=4.5,lty = 0,col = "lightgrey" )
+rect( xleft = epochX[3],xright = epochX[4],ytop = -10, ybottom=4.5,lty = 0,col = "lightgrey" )
+rect( xleft = epochX[5],xright = 0,ytop = -10, ybottom=4.5,lty = 0,col = "lightgrey" )
+par(xpd=F)
+
+
+i <- seq(1, length(mudel_deltas$Ma),by = 100 )
+lines( mudel_deltas$Ma[i], mudel_deltas$permil[i], lwd=3)
+
+i <- seq(1, length(zachos_deltas$Ma),by = 20 )
+lines(zachos_deltas$Ma[i], zachos_deltas$permil[i], ylim=c(4.5,0), xlim=c(65,0), lwd=0.5, col="black")
+# box()
+
+
+#O18 delta axis
+axis(side=2, at=c(0,1,2,3,4,5), tcl=-0.6, padj=0.7)
+axis(side=2, yaxp=c(5,-0.4,27), labels=FALSE)
+mtext(text =expression(paste(delta^{18}, "O (\u2030)")), side=2, line=1.4, cex=1)
+
+# Age axis below
+axis(side=3, at=c(0,10,20,30,40,50,60), tcl=-0.6, padj=0.85)
+axis(side=3, xaxp=c(65,0,65), labels=FALSE, tcl=-0.2)
+axis(side=3, xaxp=c(65,0,13), labels=FALSE, tcl=-0.45)
+axis(side=3, xaxp=c(65,0,65), labels=FALSE, tcl=0.2, line=1.8)
+axis(side=3, xaxp=c(65,0,13), labels=FALSE, tcl=0.45, line=1.8 )
+mtext(text="Age (Mya)", side=3, line=-1.2, cex=1)
+
+#Epoch axis
+axis(side=1, at=c(65,55.8,33.9,23.03,5.33), labels=FALSE, line=-1.2, tcl=-1.2)
+axis(side=1, at=c(65,55.8,33.9,23.03,5.33), labels=FALSE, cex.axis=1.1, line=0, tcl=0)
+axis(side=1, at=c(60.65,44.85,28.46,14.18), labels=epochs, tick=FALSE, cex.axis=1.1, line=-2.1)
+
+
+
+########################
+# Species phylogeny
+#
+
+par(mar=c(0.5,4,4,0))
+
+plot.phylo(grass.tree,show.tip.label = F,edge.width = 3,x.lim=c(53-65,53),xaxs="i",y.lim=c(0.5,6.5))
+
+
+
+
+lastPP <- get("last_plot.phylo", envir = .PlotPhyloEnv)
+nTips <- length(grass.tree$tip.label)
+nNodes <- grass.tree$Nnode
+
+d <- density(nodes$Hv_Ns,)
+polygon(lastPP$xx[2+nTips] - (c(d$x,rev(d$x)) - nodeages["Hv_Ns","ageMean"]),
+        c(d$y,rev(-d$y))+lastPP$yy[2+nTips],col="#0080FF64",lty = 0)
+d <- density(nodes$Hv_MnSl,)
+polygon(lastPP$xx[3+nTips] - (c(d$x,rev(d$x)) - nodeages["Hv_MnSl","ageMean"]),
+        c(d$y,rev(-d$y))+lastPP$yy[3+nTips],col="#0080FF64",lty = 0)
+d <- density(nodes$Hv_Bd,)
+polygon(lastPP$xx[4+nTips] - (c(d$x,rev(d$x)) - nodeages["Hv_Bd","ageMean"]),
+        c(d$y,rev(-d$y))+lastPP$yy[4+nTips],col="#0080FF64",lty = 0)
+
+#axisPhylo()
+
+
+
+
+########################
+# Species habitat climate
+#
+
+spcColors <- c( Rice = "#80808040",
+                Nardus = "#0049db40",
+                Stipa = "#ff000040",
+                Melica = "#cd28e340",
+                Brachypodium = "#00c50040",
+                Hordeum = "#ff7e0040")
+
+par(mar=c(0.5,7.5,4,2.1))
+X <- lapply(gbif,"[[","bio6")
+names(X) <- c("O. sativa","N. stricta","S. lagascae","M. nutans","B. distachyon","H. vulgare")
+X <- lapply(X,"/",10)
+boxplot(X,horizontal = T,at=6:1,xlim=c(0.5,6.5),axes=F, outline=F, col=spcColors)
+axis(1, line=-0.5, tcl=-0.2, padj = -1.2)
+mtext(text=expression(paste("minimum ", degree, "C coldest month")), cex=1, side=1, line=0.6)
+axis(2,at=6:1,labels = names(X),las=2,tick = F,lty = 0, font=3, hadj=0,line = 6,cex.axis=1.6)
+
+
+dev.off()
+```
+

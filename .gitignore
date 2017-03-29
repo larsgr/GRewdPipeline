@@ -5,3 +5,5 @@ all_vs_all.out.index.RData
 *_files/
 *_cache/
 data/*
+SupplementaryData/
+articleFigures/

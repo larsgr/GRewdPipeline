@@ -102,14 +102,15 @@ dim(lens) <- dim(grps)
 dimnames(lens) <- dimnames(grps)
 
 # Species names to show in plots
-spcID2spcName <- c( BrDi="Brachypodium", HoVu="Hordeum", MeNu1="Melica", StLa="Stipa", NaSt="Nardus")
+spcID2spcName <- c( BrDi="B. distachyon", HoVu="H. vulgare", MeNu1="M. nutans",
+                    StLa="S. lagascae", NaSt="N. stricta")
 
 # define species colors to use in plots
-spcColors <- c( Nardus = "#0049dbff",
-                Stipa = "#ff0000ff",
-                Melica = "#cd28e3ff",
-                Brachypodium = "#00c500ff",
-                Hordeum = "#ff7e00ff")
+spcColors <- c( NaSt = "#0049dbff",
+                StLa = "#ff0000ff",
+                MeNu1 = "#cd28e3ff",
+                BrDi = "#00c500ff",
+                HoVu = "#ff7e00ff")
 ```
 
 ### Venn plot for DE genes
@@ -141,7 +142,7 @@ pooidVennPlot <- function(grpIdsList){
   grid.newpage()
   
   do.call(draw.quintuple.venn, args=c( as.list(vennArgs) ,list(
-    scaled = F,category=spcNames,fill=spcColorsWht[spcNames],margin = 0.05,
+    scaled = F,category=spcNames,fill=spcColorsWht[colnames(m)],margin = 0.05,
     cex = c(1.5, 1.5, 1.5, 1.5, 1.5, 1, 0.8, 1, 0.8, 1, 0.8, 1, 0.8, 1, 0.8, 
     1, 0.7, 1, 0.7, 1, 0.7, 1, 0.7, 1, 0.7, 1, 1, 1, 1, 1, 1.5),
     cat.pos = c(0, 340, 215, 145, 20),
@@ -483,6 +484,24 @@ plot.phylo(tree, type="u", show.tip.label = F,
 newTimepoints <- c(`T-1`="W0",T0="D0",T1="D1",T3="W4",T4="W9")
 tiplabels( frame = "none", text = newTimepoints[sub(".*(T-?[0134]).*","\\1",tree$tip.label,perl=T)], col=spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))])
 legend("bottomleft",legend = names(spcColors),text.col = spcColors, y.intersp = 0.8,bty = "n" )
+
+
+svg(filename = "~/GRewd/pipeline/articleFigures/FigureDE_sampleTreeScaled.svg",
+    width = 7,height = 4)
+par(mar=c(1,1,1,1))
+plot.phylo(tree, type="u", show.tip.label = F,
+             tip.color=spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))],
+             ,cex = 1)
+tiplabels( frame = "none", text = newTimepoints[sub(".*(T-?[0134]).*","\\1",tree$tip.label,perl=T)], 
+           col=spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))],cex=0.7)
+tiplabels( pch=20, 
+           col=spcColors[match(substr(tree$tip.label,1,1),substr(names(spcColors),1,1))])
+legend("bottomleft",legend = spcID2spcName[names(spcColors)],text.col = spcColors, y.intersp = 0.8,bty = "n",
+       text.font=3 )
+
+dev.off()
+par(mar=c(5, 4, 4, 2) + 0.1)
+
 
 ```
 
