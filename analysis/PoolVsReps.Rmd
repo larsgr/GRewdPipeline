@@ -1,0 +1,204 @@
+---
+title: "Pooled approach vs traditional 3x replicates"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+```
+
+
+```{r loadLibs, include=FALSE}
+library(ggplot2)
+library(tidyverse)
+library(DESeq2)
+library(BiocParallel)
+# set multicore parameters
+bpparam <- MulticoreParam(30)
+
+
+```
+
+```{r loadData}
+# load exdpression data
+superExprMatrixFile <- "~/GRewd/pipeline/data/superExprMatrix.RDS"
+expr <- readRDS(file = superExprMatrixFile)  
+
+spcs <- c("BrDi","HoVu","MeNu1","StLa","NaSt")
+spcs <- setNames(spcs,spcs)
+
+# decode sample names
+TtoF <- c(`T-1`="ramp0",T0="peak0",T1="peak1",T3="ramp1",T4="ramp1")
+
+colData <- as.data.frame(stringr::str_split_fixed(colnames(expr),"\\.",4)[ ,1:3])
+names(colData) <- c("spcPop","timePoint","mix")
+colData$spc <-  as.factor(stringr::str_extract(colData$spcPop,paste(spcs,collapse="|")))
+
+colData$sf <- as.factor(paste0(colData$spc,TtoF[as.character(colData$timePoint)]))
+
+```
+
+
+
+Does the pooled approach generate as good differential expression results as if we had used "traditional" triplicate approach?
+
+To investiagate this I'll take advantage of the timepoints T0 and T1 (i.e. short term cold-response) in MeNu and BrDi that have both pooled and individual samples available. To remind you, here is an overview of the all the samples we used in the study:
+
+```{r}
+table(colData$spcPop, colData$timePoint, colData$mix)
+```
+
+For this analysis the dataset will be divided into three sets of non-overlapping samples. Two "traditional" datasets with three replicate samples for T0 (control) and three replicate samples for T1 (cold treatment) from BrDi and MeNu. The remaining samples from all species and timepoints, including all the pooled samples, will be the third dataset which we will do our pooled approach on. Then differential expression analysis will be performed for the short-term response in these datasets so that the results can be compared.
+
+```{r runDESeq, cache=T, include=F}
+# Find the samples for the "standard" type of analysis with three replicates
+idxMn <- colData$spcPop=="MeNu1" & colData$timePoint %in% c("T0","T1") & colData$mix=="ind" 
+idxBd <- colData$spcPop=="BrDi" & colData$timePoint %in% c("T0","T1") & colData$mix=="ind" 
+
+# Leftover samples for our pooled approach
+idxPool <- !(idxMn | idxBd)
+
+
+ddsMn <- DESeqDataSetFromMatrix(countData = round(expr[ ,idxMn]),
+                              colData = colData[idxMn,],
+                              design = formula(~ timePoint ))
+ddsMn <- DESeq(ddsMn,parallel = T,BPPARAM = bpparam)
+resMn <- results(ddsMn)
+
+ddsBd <- DESeqDataSetFromMatrix(countData = round(expr[ ,idxBd]),
+                              colData = colData[idxBd,],
+                              design = formula(~ timePoint ))
+
+ddsBd <- DESeq(ddsBd,parallel = T,BPPARAM = bpparam)
+resBd <- results(ddsBd)
+
+# now try the untraditional approach, but explude the samples used above
+ddsPool <- DESeqDataSetFromMatrix(countData = round(expr[ ,idxPool]),
+                              colData = colData[idxPool,],
+                              design = formula(~ sf ))
+
+ddsPool <- DESeq(ddsPool,parallel = T,BPPARAM = bpparam)
+
+lapply(spcs,function(spc){
+    resPeak <- results(ddsPool, contrast=c("sf",paste0(spc,"peak1"),paste0(spc,"peak0")))
+}) -> resPool
+
+```
+
+```{r defFun}
+# color by p-adjusted values
+res2col <- function(res1,res2){
+  col <- 1 + (res1$padj<0.05)+2*(res2$padj<0.05)
+  isOpposite <- col==4 & sign(res1$log2FoldChange) != sign(res2$log2FoldChange)
+  isOpposite[is.na(isOpposite)] <- F
+  col[col==4 & sign(res1$log2FoldChange) != sign(res2$log2FoldChange)] <- 5
+  return(col)  
+}
+
+col2legend <- function(col,desc1,desc2){
+  paste0( c("neither DE",paste(desc1,"DE"), paste(desc2,"DE"),
+            "both DE same","both DE opposite"),
+          " (",table(factor(col,levels = 1:5)),")")
+}
+
+
+myDEplot <- function(res1,res2,desc1,desc2){
+  col <- res2col(res1,res2)
+
+  plot(res1$log2FoldChange, res2$log2FoldChange, pch=20,
+       col=col, main=paste(desc1,"vs.",desc2),
+       xlab= paste0("log2FoldChange (",desc1,")"),
+       ylab= paste0("log2FoldChange (",desc2,")"))
+  
+  legend("topleft",pch=20,col=1:5, cex=0.8,
+         legend=col2legend(col,desc1,desc2))
+}
+
+```
+
+First let's compare the DE results when using three replicates versus using single pooled samples. Both are testing the same conditions but using different samples, so any differences can be attributed to noise (biological or technical). Note that the pooled approach uses the other timepoints and species that do have replicates to estimate the dispersion or else it would be impossible to get a P-value. A gene is called DE if it has FDR adjusted P-value less than 0.05.
+
+```{r plotPoolvs3xReps}
+myDEplot(res1 = resPool$MeNu1, res2 = resMn, desc1 = "MeNu 1xPool", desc2 = "MeNu 3xRep")
+myDEplot(res1 = resPool$BrDi, res2 = resBd, desc1 = "BrDi 1xPool", desc2 = "BrDi 3xRep")
+```
+
+For Melica a little more than half of the DEGs are in agreement between the methods. For Brachypodium the pooled approaches seems to be less sensitive (fewer DEGs) but with good agreement.
+
+Now let's compare between species using either of the approaches:
+
+```{r plotCrossPoolvs3xReps}
+myDEplot(res1 = resPool$MeNu1, res2 = resPool$BrDi, 
+         desc1 = "MeNu 1xPool", desc2 = "BrDi 1xPool")
+myDEplot(res1 = resMn, res2 = resBd, 
+         desc1 = "MeNu 3xReps", desc2 = "BrDi 3xReps")
+```
+
+```{r}
+tbl <- table( pooled=res2col(res1 = resPool$MeNu1, res2 = resPool$BrDi),
+              reps=res2col(res1 = resMn, res2 = resBd))
+
+colnames(tbl) <- c("neither DE","MeNu DE", "BrDi DE","both DE same","both DE opposite")
+rownames(tbl) <- c("neither DE","MeNu DE", "BrDi DE","both DE same","both DE opposite")
+
+
+reshape2::melt(tbl) %>% 
+  ggplot( aes(x=pooled,y=reps,size=value)) +
+  geom_point(color="grey") +
+  geom_text(aes(label = value), size = 4) + # , nudge_x = 0.2, nudge_y = 0.2
+  scale_size_area(max_size = 40, guide=F) +
+  theme_classic()
+```
+
+
+
+
+
+### The other species:
+
+For your viewing pleasure...
+
+```{r plotMeNuCrossAllOtherPool}
+myDEplot(res1 = resMn, res2 = resPool$BrDi, 
+         desc1 = "MeNu 3xReps", desc2 = "BrDi 1xPool")
+myDEplot(res1 = resMn, res2 = resPool$StLa, 
+         desc1 = "MeNu 3xReps", desc2 = "StLa 1xPool")
+myDEplot(res1 = resMn, res2 = resPool$NaSt, 
+         desc1 = "MeNu 3xReps", desc2 = "NaSt 1xPool")
+myDEplot(res1 = resMn, res2 = resPool$HoVu, 
+         desc1 = "MeNu 3xReps", desc2 = "HoVu 3xreps/1xPool")
+```
+
+```{r plotBrDi3xRepsCrossAllOtherPool}
+myDEplot(res1 = resBd, res2 = resPool$MeNu1, 
+         desc1 = "BrDi 3xReps", desc2 = "MeNu 1xPool")
+myDEplot(res1 = resBd, res2 = resPool$StLa, 
+         desc1 = "BrDi 3xReps", desc2 = "StLa 1xPool")
+myDEplot(res1 = resBd, res2 = resPool$NaSt, 
+         desc1 = "BrDi 3xReps", desc2 = "NaSt 1xPool")
+myDEplot(res1 = resBd, res2 = resPool$HoVu, 
+         desc1 = "BrDi 3xReps", desc2 = "HoVu 3xreps/1xPool")
+```
+
+```{r 3dPlot, eval=F}
+library(threejs)
+
+res1=resMn
+res2=resPool$MeNu1
+res3=resPool$HoVu
+
+
+isNa <- any(is.na)
+x <- res1$log2FoldChange
+y <- res2$log2FoldChange
+z <- res3$log2FoldChange
+col1 <- res2col(res1,res3)
+col2 <- res2col(res2,res3)
+isNa <-is.na(x) | is.na(y) | is.na(z) | is.na(col1) | is.na(col2)
+
+apply((col2rgb(col1[!isNa]) + col2rgb(col2[!isNa]))/2,2,function(x){
+  rgb(x[1],x[2],x[3],maxColorValue = 255)
+}) -> col
+
+scatterplot3js(x[!isNa],y[!isNa],z[!isNa],color = col,renderer = "webgl")
+```
