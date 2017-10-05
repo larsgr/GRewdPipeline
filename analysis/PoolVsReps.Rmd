@@ -14,7 +14,8 @@ library(tidyverse)
 library(DESeq2)
 library(BiocParallel)
 # set multicore parameters
-bpparam <- MulticoreParam(30)
+# bpparam <- MulticoreParam(20)
+bpparam <- SerialParam() # don't run in parallel
 
 
 ```
@@ -34,8 +35,15 @@ colData <- as.data.frame(stringr::str_split_fixed(colnames(expr),"\\.",4)[ ,1:3]
 names(colData) <- c("spcPop","timePoint","mix")
 colData$spc <-  as.factor(stringr::str_extract(colData$spcPop,paste(spcs,collapse="|")))
 
+# combined species and timepoint factor
 colData$sf <- as.factor(paste0(colData$spc,TtoF[as.character(colData$timePoint)]))
 
+# combined species and timepoint factor with pooled/individual factor for selected timepoints
+colData$sf2 <- paste0(colData$spc,TtoF[as.character(colData$timePoint)])
+colData$sf2 <- ifelse(colData$sf2 %in% c("MeNu1peak0","MeNu1peak1","BrDipeak0","BrDipeak1"),
+                     paste0(colData$spc,TtoF[as.character(colData$timePoint)],colData$mix),
+                     colData$sf2)
+colData$sf2 <- as.factor(colData$sf2)
 ```
 
 
@@ -44,13 +52,45 @@ Does the pooled approach generate as good differential expression results as if 
 
 To investiagate this I'll take advantage of the timepoints T0 and T1 (i.e. short term cold-response) in MeNu and BrDi that have both pooled and individual samples available. To remind you, here is an overview of the all the samples we used in the study:
 
-```{r}
+```{r sampleTable}
 table(colData$spcPop, colData$timePoint, colData$mix)
 ```
 
-For this analysis the dataset will be divided into three sets of non-overlapping samples. Two "traditional" datasets with three replicate samples for T0 (control) and three replicate samples for T1 (cold treatment) from BrDi and MeNu. The remaining samples from all species and timepoints, including all the pooled samples, will be the third dataset which we will do our pooled approach on. Then differential expression analysis will be performed for the short-term response in these datasets so that the results can be compared.
+First let's test the differential expression betweeen the pooled and the three individual replicates from the same timepoint and species. Since the test is between samples under the same conditions there should be no difference, i.e. any DEG are false positives caused by unwanted noise. Here are the MAplots and the number of differentially expressed genes (FDR adjusted P-value < 0.05):
+
+```{r runDESeqFull, cache=T, include=F}
+# try the untraditional approach on all samples, but treat pooled and individual as different levels
+ddsFull <- DESeqDataSetFromMatrix(countData = round(expr),
+                              colData = colData,
+                              design = formula(~ sf2 ))
+
+ddsFull <- DESeq(ddsFull,parallel = T,BPPARAM = bpparam)
+
+resPoolVsIndMeNuT0 <- results(ddsFull, contrast=c("sf2","MeNu1peak0ind","MeNu1peak0mix"))
+resPoolVsIndMeNuT1 <- results(ddsFull, contrast=c("sf2","MeNu1peak1ind","MeNu1peak1mix"))
+resPoolVsIndBrDiT0 <- results(ddsFull, contrast=c("sf2","BrDipeak0ind","BrDipeak0mix"))
+resPoolVsIndBrDiT1 <- results(ddsFull, contrast=c("sf2","BrDipeak1ind","BrDipeak1mix"))
+
+```
+
+```{r plotMA}
+DESeq2::plotMA(resPoolVsIndMeNuT0, alpha=0.05,
+               main=paste0("MeNu T0 3xReps vs 1xPool, DEGs (Padj<0.05) = ",sum(resPoolVsIndMeNuT0$padj<0.05,na.rm = T)))
+DESeq2::plotMA(resPoolVsIndMeNuT1, alpha=0.05,
+               main=paste0("MeNu T1 3xReps vs 1xPool, DEGs (Padj<0.05) = ",sum(resPoolVsIndMeNuT1$padj<0.05,na.rm = T)))
+DESeq2::plotMA(resPoolVsIndBrDiT0, alpha=0.05,
+               main=paste0("BrDi T0 3xReps vs 1xPool, DEGs (Padj<0.05) = ",sum(resPoolVsIndBrDiT0$padj<0.05,na.rm = T)))
+DESeq2::plotMA(resPoolVsIndBrDiT1, alpha=0.05,
+               main=paste0("BrDi T1 3xReps vs 1xPool, DEGs (Padj<0.05) = ",sum(resPoolVsIndBrDiT1$padj<0.05,na.rm = T)))
+```
+
+For the next analysis the dataset will be divided into three sets of non-overlapping samples. Two "traditional" datasets with three replicate samples for T0 (control) and three replicate samples for T1 (cold treatment) from BrDi and MeNu. The remaining samples from all species and timepoints, including all the pooled samples, will be the third dataset which we will do our pooled approach on. Then differential expression analysis will be performed for the short-term response in these datasets so that the results can be compared.
+
+
 
 ```{r runDESeq, cache=T, include=F}
+
+
 # Find the samples for the "standard" type of analysis with three replicates
 idxMn <- colData$spcPop=="MeNu1" & colData$timePoint %in% c("T0","T1") & colData$mix=="ind" 
 idxBd <- colData$spcPop=="BrDi" & colData$timePoint %in% c("T0","T1") & colData$mix=="ind" 
@@ -150,6 +190,15 @@ reshape2::melt(tbl) %>%
   theme_classic()
 ```
 
+
+### MAplot HoVu T1 vs T0
+
+Just for comparison with the MAplots from the same timepoints, here is the MAplot for HoVu T1 vs T0 which have the same number of replicates, i.e. 3xReps vs 1xPool
+
+```{r}
+DESeq2::plotMA(resPool$HoVu, alpha=0.05,
+               main=paste0("HoVu T1 3xReps vs  T0 1xPool, DEGs (Padj<0.05) = ",sum(resPool$HoVu$padj<0.05,na.rm = T)))
+```
 
 
 
