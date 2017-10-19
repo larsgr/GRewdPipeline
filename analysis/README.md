@@ -15,6 +15,10 @@ The following scripts generates some of the underlying data for the figures:
 * __pamlResultsOverview.Rmd__ Summarise the positive selection test results
 
 
+### Analysis used in paper 2
+
+* __paper2transcriptDEresults.R__: Extract DE results for the candidate genes in paper 2
+
 
 ### compareLoliumArticle.Rmd (deprecated)
 
