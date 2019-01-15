@@ -19,6 +19,9 @@ The following scripts generates some of the underlying data for the figures:
 
 * __paper2transcriptDEresults.R__: Extract DE results for the candidate genes in paper 2
 
+### CorrelateFamilySizeAndColdResponsiveness.Rmd
+
+Test for correlation between family size (orthogroup size) and DEGs. Also includes phylostratigraphic analysis (Note this imports gene trees from another project...).
 
 ### compareLoliumArticle.Rmd (deprecated)
 

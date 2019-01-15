@@ -1,0 +1,608 @@
+---
+title: "Correlation of family size and responsiveness to cold"
+output:
+  html_document: 
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r loadLibs, include=F}
+library(DESeq2)
+library(tidyverse)
+library(scales)
+
+source("~/GRewd/pipeline/R/orthoGrpTools.R")
+```
+
+## Aim of analysis
+
+We claim in the paper that genes important to cold acclimation tend to have more complex duplication history. The basis for this was that a large part of the Greenup genes (i.e. known cold responsive genes in barley) were not in the HCOGs because of complex gene tree topology (as inferred by manually inspecting each tree). The aim of this analysis is to statistically test if this is a general trend for all cold-response genes by correlating family size with cold response.
+
+## family size correlates with cold response
+
+Cold-responsive genes are identified using the DEseq analysis performed on individual species as this includes all the genes (as opposed to the HCOG multi-species test). Genes are called DE if |log2FoldChange| > 1  and FDR adjusted P-value < 0.05. Note that DEseq filters lowly expressed genes before testing, these filtered genes are not included in the "not DE" category.
+
+```{r loadData}
+orthoPath <- "/mnt/SCRATCH/mariansc/share/orthos"
+# load DE
+load(file.path(orthoPath,"DESeq/DE.RData"))
+
+# load groups
+grpsTbl <- loadOrthoGrpsTable(orthoGrpFile = file.path(orthoPath,"orthoMCL/groups.txt"))
+grps <- OrthoGrpTableToArray(grpsTbl)
+
+OGsizes <- sapply(grps,length)
+dim(OGsizes) <- dim(grps)
+dimnames(OGsizes) <- dimnames(grps)
+
+# load split and filtered groups
+goodGrpsTbl <- loadOrthoGrpsTable(file.path(orthoPath,"splitGroups/goodGroups.txt"))
+goodGrps <- OrthoGrpTableToArray(goodGrpsTbl)
+
+OGsizes2 <- sapply(goodGrps,length)
+dim(OGsizes2) <- dim(goodGrps)
+dimnames(OGsizes2) <- dimnames(goodGrps)
+
+goodTreeStats <- 
+  readRDS(file.path(orthoPath,"splitGroups/goodTreeStats.rds")) %>% 
+  rownames_to_column(var="grpID2")
+
+OGsizes <- sapply(grps,length)
+dim(OGsizes) <- dim(grps)
+dimnames(OGsizes) <- dimnames(grps)
+
+# define some useful subsets of species:
+spcDenovo <- c("BrDi","HoVu","MeNu1","NaSt","StLa")
+spcRefPooid <- c("Bd_R","Hv_R")
+spcRefOut <- c("Os_R","Zm_R","Sb_R")
+spcRef <- c(spcRefPooid,spcRefOut)
+
+
+# combine the DEseq result tables into a single table and add orthogroup
+DEtbl <- 
+  map( c(shortTerm="resPeak",longTerm="resRamp"), function(rampOrPeak){
+    DE %>% 
+    map(rampOrPeak) %>% 
+    map(as.data.frame) %>% 
+    map(rownames_to_column, var="geneID") %>% 
+    bind_rows( .id="spc")
+  }) %>% 
+  bind_rows( .id = "responseType" ) %>% 
+  # remove StLa result from the longTerm tests as there are no W0 samples for StLa
+  filter( !(responseType == "longTerm" & spc == "StLa")) %>% 
+  as.tibble() %>% 
+  left_join( separate(grpsTbl,seqID, into=c("spc","geneID"),sep = "\\|"),by=c("spc","geneID")) %>% 
+  # remove genes not tested for DE (automatically filtered by DESeq2)
+  filter( !is.na(padj)) %>% 
+  # add some OG size data
+  mutate( OGsizeRefPooid = rowSums(OGsizes[,c("Bd_R","Hv_R")])[grpID]) %>% 
+  mutate( hasRefOrtholog = rowSums(OGsizes[,c(spcRef)]>0)[grpID]>0) %>% 
+  mutate( OGsize = rowSums(OGsizes)[grpID]) %>% 
+  # classify DEGs
+  mutate( isDEG = ((padj < 0.05) & (abs(log2FoldChange) > 1))) %>% 
+  mutate( dirDEG = c("down","not DE","up")[2+isDEG * sign(log2FoldChange)])
+
+
+# helper function to plot number of observations
+my_stat_n <- function(x){data.frame(y=mean(x),label=paste0("n=",signif(length(x)/1000,digits = 2),"k"))}
+
+```
+
+The gene family size is indicated by the number of genes in the orthogroup divided by the number of species, i.e. the average copy number per species in ortholog group. The following plot shows the mean family size for each cold response category. Errorbars are 95% CI of mean, and the number of observation are plotted in red text.
+
+```{r plotOGsizeVSdirDEG}
+DEtbl %>%
+  ggplot( aes(x=dirDEG, y=OGsize/ncol(grps))) +
+  stat_summary(geom="errorbar", fun.data=mean_cl_normal, width=0.1)+
+  stat_summary(geom="point", fun.y=mean, color="red") + 
+  stat_summary(geom="text", fun.data=my_stat_n, color="red", angle=90, vjust=-0.5) + 
+  facet_grid( . ~ responseType) +
+  ylab("family size (mean duplication number)") + xlab("cold response")
+
+```
+
+Interpretation: Genes that are cold-responsive tend to belong to larger families. However, in the case of short-term down-regulated genes, this is not significant.
+
+```{r wilcoxonTest}
+wilcox.test(x = filter(DEtbl,responseType=="shortTerm",dirDEG=="up")$OGsize,
+            y = filter(DEtbl,responseType=="shortTerm",dirDEG=="not DE")$OGsize,
+            alternative="greater")
+```
+
+
+## However...
+
+There are many reasonable ways the data could be analysed and filtered which may give different results. The following sections explores some of these.
+
+### Incomplete denovo transcriptomes and lack of known orthologs
+
+Denovo assemblies will not include genes that are not expressed, which will result in an underestimation of family size. Denovo assemblies also tend to produce more transcripts than are found in reference genomes, thus overestimating the number of genes. The following plot devides the data depending on how many of the five denovo transcriptomes that are included in each ortholog group. 
+
+```{r plot_nDenovo, fig.height=8}
+DEtbl %>%
+  mutate( nDenovo =rowSums(OGsizes[,c("BrDi","HoVu","MeNu1","NaSt","StLa")]>0)[grpID] ) %>% 
+  ggplot( aes(x=dirDEG, y=OGsize/ncol(grps))) +
+  stat_summary(geom="errorbar", fun.data=mean_cl_normal, width=0.1)+
+  stat_summary(geom="point", fun.y=mean, color="red") + 
+  stat_summary(geom="text", fun.data=my_stat_n, color="red", angle=90, vjust=-0.5) + 
+  facet_grid( nDenovo ~ responseType,scales = "free_y") +
+  ylab("family size (mean duplication number)") + xlab("cold response")
+```
+
+Interpretation: The general trend observed in the first plot is only true when all five denovo species are represented.
+
+The following plot shows the proportion of the ortholog groups that do not have any orthologs from any of the reference genomes (maize, rice, sorghum, barley and brachypodium). note: only counting ortholog groups that include genes that have been tested for DE, i.e. passed DESeq's low expression filter
+
+```{r plotMissingRefSpc}
+DEtbl %>%
+  mutate( nDenovo =rowSums(OGsizes[,c("BrDi","HoVu","MeNu1","NaSt","StLa")]>0)[grpID] ) %>%
+  mutate( onlyDenovo = rowSums(OGsizes[,c(spcRef)]>0)[grpID]==0) %>%
+  select(nDenovo,grpID,onlyDenovo) %>%  distinct() %>%
+# tibble( nDenovo = rowSums(OGsizes[,c(spcDenovo)]>0),
+#         onlyDenovo = rowSums(OGsizes[,c(spcRef)])==0) %>% 
+#   filter(nDenovo>0) %>% 
+  # with(plot(table(nDenovo,onlyDenovo), col=c("white","grey70")))
+  ggplot( aes(x=nDenovo, y=as.numeric(onlyDenovo))) +
+  stat_summary(fun.y=mean, geom="bar", fill="grey70") +
+  scale_y_continuous(labels=percent_format(), limits=c(0,1)) +
+  stat_summary(geom="text", fun.data=my_stat_n, color="red", vjust=-0.5) + 
+  ylab( "missing ref.genome") + xlab("number of denovo genomes in grp")
+```
+
+Interpretation: A majority of the ortholog groups do not have orthologs in all the denovo species and most of the ortholog groups that include just one or two denovo species do not have any orthologs in the reference genomes.
+
+Since genes with no known ortholog in reference genomes are a bit suspicous (contamination? psuedo-genes?) it might be a good idea to exclude these from the analysis. In the following plots they will be excluded.
+
+### Expression level bias
+
+The mean expression level (baseMean) is a possible confounding factor as lowly expressed genes both have lower power to detect DE and may be missing from the denovo assembly thus underestimating the gene family size. The following plot shows the mean family size plotted against mean expression level. Below are the corresponding density plots. (note: only ortholog groups with reference ortholog included)
+
+```{r plotBasemeanVsOGsize}
+DEtbl %>% 
+  filter( hasRefOrtholog ) %>% 
+  # DEG up or down
+  ggplot( aes(x=log2(1+baseMean), y=OGsize/ncol(grps), color=dirDEG)) + 
+  geom_smooth(method = 'gam', formula = y ~ s(x, bs = "cs"), span=3) +
+  facet_grid( . ~ responseType) +
+  ylab("family size (mean duplication number)")
+
+
+DEtbl %>% 
+  filter( hasRefOrtholog ) %>% 
+  # DEG up or down
+  ggplot( aes(x=log2(1+baseMean),fill=dirDEG,color=dirDEG)) + 
+  geom_density(alpha=0.1) +
+  facet_grid( . ~ responseType)
+
+```
+
+Interpretation: Around the typical expression levels the conclusions are the same as from the earlier plot, i.e. DEGs tend to belong to larger gene families, but at low or high expression levels it is less clear. Interrestingly, for lowly expressed short-term, the down-regulated DEGs tend to belong to smaller gene families.
+
+It might be a good idea to focus on genes that fall within the typical mean expression levels, for example 5 < log2(1+baseMean)  < 10. Recreating the first plot with the additional filters does not results in any change to the conclusion:
+
+```{r plotOGsizeVSdirDEGfiltered}
+DEtbl %>%
+  filter( hasRefOrtholog ) %>% 
+  filter( log2(1+baseMean) > 5, log2(1+baseMean) < 10) %>% 
+  ggplot( aes(x=dirDEG, y=OGsize/ncol(grps))) +
+  stat_summary(geom="errorbar", fun.data=mean_cl_normal, width=0.1)+
+  stat_summary(geom="point", fun.y=mean, color="red") + 
+  stat_summary(geom="text", fun.data=my_stat_n, color="red", angle=90, vjust=-0.5) + 
+  facet_grid( . ~ responseType) +
+  ylab("family size (mean duplication number)") + xlab("cold response")
+
+```
+
+### Split and filtered trees
+
+Part of the pipeline includes splitting large trees and apply "minimum" topology filtering the trees so that: 1) all the pooids form a single clan, and 2) the orthogroup includes at least one basal (StLa, NaSt, MeNu) and 1 "core" (HoVu, BrDi) denovo ortholog.
+
+The following plots show how the filtering correlates cold-response. The second plot only includes the genes with typical mean gene expression.
+```{r plotPropFiltered}
+DEtbl %>% 
+  left_join( separate(goodGrpsTbl,seqID, into=c("spc","geneID"),sep = "\\|") %>% dplyr::rename(grpID2=grpID),by=c("spc","geneID")) %>% 
+  ggplot( aes(x=dirDEG, y=as.numeric(is.na(grpID2)))) +
+  stat_summary(geom="errorbar", fun.data=mean_cl_normal, width=0.1)+
+  stat_summary(geom="point", fun.y=mean, color="red") + 
+  stat_summary(geom="text", fun.data=my_stat_n, color="red", angle=90, vjust=-0.5) + 
+  facet_grid( . ~ responseType) +
+  scale_y_continuous(labels=percent) +
+  ylab("removed by minimum filter") + xlab("cold response")
+  
+DEtbl %>% 
+  left_join( separate(goodGrpsTbl,seqID, into=c("spc","geneID"),sep = "\\|") %>% dplyr::rename(grpID2=grpID),by=c("spc","geneID")) %>% 
+  filter( log2(1+baseMean) > 5, log2(1+baseMean) < 10) %>% 
+  ggplot( aes(x=dirDEG, y=as.numeric(is.na(grpID2)))) +
+  stat_summary(geom="errorbar", fun.data=mean_cl_normal, width=0.1)+
+  stat_summary(geom="point", fun.y=mean, color="red") + 
+  stat_summary(geom="text", fun.data=my_stat_n, color="red", angle=90, vjust=-0.5) + 
+  facet_grid( . ~ responseType) +
+  scale_y_continuous(labels=percent) +
+  ylab("removed by minimum filter") + xlab("cold response") + ggtitle("5 < log2(1+baseMean)  < 10")
+```
+
+Interpretation: cold-responsive genes tend to be removed by the filter more often. Interrestingly the short-term down-regulated genes show the opposite trend, i.e. they are more likely to pass the filter.
+
+Using the split trees we can focus on the family size within the pooids. This eliminates large ortholog groups that may be caused by orthoMCL failing to separate pre-poaceae duplications. The first figure calculates family size based on all five denovo and the two reference pooids, while the second uses only the two reference pooids.
+```{r plotFilteredOGsize}
+DEtbl %>% 
+  left_join( separate(goodGrpsTbl,seqID, into=c("spc","geneID"),sep = "\\|") %>% dplyr::rename(grpID2=grpID),by=c("spc","geneID")) %>% 
+  filter( !is.na(grpID2)) %>% 
+  mutate( OGsizePooid = rowSums(OGsizes2[,c(spcDenovo,spcRefPooid)])[grpID2]/7) %>% 
+  ggplot( aes(x=dirDEG, y=OGsizePooid)) +
+  stat_summary(geom="errorbar", fun.data=mean_cl_normal, width=0.1)+
+  stat_summary(geom="point", fun.y=mean, color="red") + 
+  stat_summary(geom="text", fun.data=my_stat_n, color="red", angle=90, vjust=-0.5) + 
+  facet_grid( . ~ responseType) +
+  ylab("family size (pooids)") + xlab("cold response")
+
+DEtbl %>% 
+  left_join( separate(goodGrpsTbl,seqID, into=c("spc","geneID"),sep = "\\|") %>% dplyr::rename(grpID2=grpID),by=c("spc","geneID")) %>% 
+  filter( !is.na(grpID2)) %>% 
+  mutate( OGsizeRefPooid = rowSums(OGsizes2[,spcRefPooid])[grpID2]/2) %>% 
+  ggplot( aes(x=dirDEG, y=OGsizeRefPooid)) +
+  stat_summary(geom="errorbar", fun.data=mean_cl_normal, width=0.1)+
+  stat_summary(geom="point", fun.y=mean, color="red") + 
+  stat_summary(geom="text", fun.data=my_stat_n, color="red", angle=90, vjust=-0.5) + 
+  facet_grid( . ~ responseType) +
+  ylab("family size (ref. pooids)") + xlab("cold response")
+```
+Interpretation: The pattern of cold-responsive genes being from larger gene families is less clear now. However, the short-term down-regulated genes are significantly correlated with smaller family size.
+
+### Proportion of 1:1 gene families
+
+The plot below show the proportion of split and filtered ortholog groups that has exactly 1 ortholog in both barley and brachypodium.
+
+```{r plotFiltered11}
+DEtbl %>% 
+  left_join( separate(goodGrpsTbl,seqID, into=c("spc","geneID"),sep = "\\|") %>% dplyr::rename(grpID2=grpID),by=c("spc","geneID")) %>% 
+  filter( !is.na(grpID2)) %>% 
+  mutate( isRefPooid11 = rowSums(OGsizes2[,spcRefPooid]==1)[grpID2]==2) %>% 
+  ggplot( aes(x=dirDEG, y=as.numeric(isRefPooid11))) +
+  stat_summary(geom="errorbar", fun.data=mean_cl_normal, width=0.1)+
+  stat_summary(geom="point", fun.y=mean, color="red") + 
+  stat_summary(geom="text", fun.data=my_stat_n, color="red", angle=90, vjust=-0.5) + 
+  facet_grid( . ~ responseType) +
+  scale_y_continuous(labels=percent) +
+  ylab("1:1 families (ref)") + xlab("cold response")
+```
+Interpretation: Cold-responsive genes is less likely to have a 1:1 orthology except for short-term down-regulated.
+
+We can do the same for the original ortholog groups and check how many that have a single ortholog in all five reference species:
+```{r plotAll11}
+DEtbl %>% 
+  mutate( isRef11 = rowSums(OGsizes[,spcRef]==1)[grpID]==5) %>% 
+  ggplot( aes(x=dirDEG, y=as.numeric(isRef11))) +
+  stat_summary(geom="errorbar", fun.data=mean_cl_normal, width=0.1)+
+  stat_summary(geom="point", fun.y=mean, color="red") + 
+  stat_summary(geom="text", fun.data=my_stat_n, color="red", angle=90, vjust=-0.5) + 
+  facet_grid( . ~ responseType) +
+  scale_y_continuous(labels=percent) +
+  ylab("1:1:1:1:1 families (ref of all)") + xlab("cold response")
+```
+Interpretation: 1:1:1:1:1 orthologs tend to be down-regulated and not up-regulated. Note the clear enrichment of 1:1:1:1:1 orthologs among short-term down-regulated genes.
+
+
+## Conclusion
+
+There is a positive correlation between gene family size and cold response, with the exception of short-term down-regulated genes. Conversely, 1:1 orthologs are less likely to be up-regulated in respons to cold but is enriched among the short-term down-regulated genes.
+
+Gene families with a single ortholog in each species is indicative of an essential function which is sensitive to loss of dosage-balance caused by duplication. These gene families would be unlikely candidates for newly evolved functions such as cold-acclimation. Interrestingly there is a tendency for these genes to be down-regulated shortly after cold exposure. This might be a stress-response where conserved housekeeping genes, such as those involved in photosynthesis are down-regulated.
+
+Large gene families become large because they have a tendency to be duplicated and/or to retain the duplicates. Such gene families are less likely to be restrained by dosage and can therefore tolerate newly acquired expression patterns, such as response to cold, whether it is functional or not. Furthermore, the redundancy caused by having multiple copies allows for relaxed selection and therefore more chances to stumble upon new functions.
+
+## phylostratigraphic analysis
+
+In phylostratigraphic analysis each gene is assigned to a phylostrata that indicates the age of the gene family. The phylostrata is defined by the earliest common ancestor that conatins an ortholog of the given gene. This then used to look for enrichment of certain gene classes (i.e. cold responsive) at the different phylostrata. 
+
+A common method to identify the phylostrata is to blastp against all possible sequences available, and assign the phylostrata based on the hit with the oldest MRCA. However, in this analysis I use the gene-trees downloaded from ensembl plants compara. The age of the oldest internal node in the gene-tree is used as the phylostrata for that tree. The ortholog groups is assigned to a gene-tree (and hence phylostrata) by mapping the matching Brachypodium geneIDs.
+
+```{r loadTrees}
+# load ensembl trees
+treeData <- readRDS("~/CoExCorr/data/treeData/treeData.RDS")
+
+
+# load ncbi taxon ID mappings
+taxidTbl <- read_tsv(file = "~/CoExCorr/indata/taxid2taxnames.txt", col_types = cols())
+
+## tax ids for our species
+spc2taxid <- c(
+  Sb=4558,
+  Os=39947,
+  Zm=4577,
+  Bd=15368,
+  Hv=112509)
+
+# add to taxidTbl
+taxidTbl$spc <- names(spc2taxid)[match(taxidTbl$taxonID,spc2taxid)]
+
+# Phylostrata for brachypodium
+orderedTaxonsTbl <- 
+  tibble( taxonID =
+  c( 15368,#	Brachypodium distachyon
+     147368,#	Pooideae
+     359160,#	BOP clade # includes rice
+     4479,#	Poaceae # grass
+     4734,#	commelinids # within monocots
+     3398,#	Magnoliophyta # flowering plants
+     58023,#	Tracheophyta # vascular plants
+     3193,#	Embryophyta # land plants
+     33090,#	Viridiplantae # both land and sea
+     2759 )) %>%  #	Eukaryota 
+  left_join(taxidTbl, by="taxonID")
+
+orderedTaxonsTblReduced <- 
+  tibble( taxonID =
+            c( #15368,#	Brachypodium distachyon
+               147368,#	Pooideae
+               359160,#	BOP clade # includes rice
+               4479,#	Poaceae # grass
+               #4734,#	commelinids # within monocots
+               3398,#	Magnoliophyta # flowering plants
+               58023,#	Tracheophyta # vascular plants
+               3193,#	Embryophyta # land plants
+               33090,#	Viridiplantae # both land and sea
+               2759 )) %>%  #	Eukaryota 
+  left_join(taxidTbl, by="taxonID")
+
+# map Brachypodium distachyon -> Pooideae and commelinids -> Poaceae
+reduceTaxonOrder <- c(1,1,2,3,3,4,5,6,7,8)
+
+# make a table of taxon counts per tree
+taxCount <-
+  treeData %>% 
+  map( ~ as.character(.x$tip.data$taxonID)) %>% 
+  data_frame( taxon = ., treeID = names(.)) %>% 
+  unnest() %>% 
+  with(., table(treeID,taxon)) %>% 
+  as.matrix()
+
+# Which trees countains Brachy
+treesWithBd <- rownames(taxCount)[taxCount[,"15368"]>0]
+
+tipData <- 
+  treeData[treesWithBd] %>% 
+  map( ~ tibble(geneID=.x$tip.label, taxonID=as.character(.x$tip.data$taxonID))) %>% 
+  bind_rows(.id="treeID") %>% 
+  as_tibble() %>% 
+  # filter(taxonID %in% spc2taxid) %>% 
+  left_join(taxidTbl %>% mutate(taxonID = as.character(taxonID)),by="taxonID")
+
+nodeData <- 
+  treeData[treesWithBd] %>% 
+  map( "node.data" ) %>% 
+  bind_rows(.id="treeID") %>% 
+  as_tibble() %>% 
+  left_join(taxidTbl %>% mutate(taxonID = as.character(taxonID)),by="taxonID")
+
+# find oldest node in each tree
+treeTaxon <- 
+  nodeData %>% 
+  mutate(taxonOrder = match(taxonName,orderedTaxonsTbl$taxonName)) %>% 
+  filter( !is.na(taxonOrder)) %>% 
+  group_by(treeID) %>% 
+  summarise( taxonOrder = max(taxonOrder)) %>%
+  # remove brachy and commelinids
+  mutate( taxonOrder = reduceTaxonOrder[taxonOrder]) %>% 
+  mutate( taxonName = factor(orderedTaxonsTblReduced$taxonName[taxonOrder], 
+                             levels=orderedTaxonsTblReduced$taxonName))
+#   summarise( taxonOrder = max(taxonOrder)) %>%
+#   mutate( taxonName = factor(orderedTaxonsTbl$taxonName[taxonOrder], 
+#                              levels=orderedTaxonsTbl$taxonName))
+
+# map grpIDs to TreeIDs
+grpTreeTbl <- 
+  tibble( geneID=grps[,"Bd_R"], grpID=rownames(grps)) %>% 
+  filter(!map_lgl(geneID,is.null)) %>% 
+  unnest() %>% 
+  mutate( geneID = toupper(sub("\\.[0-9]+$","",geneID))) %>% 
+  left_join( filter(tipData,spc=="Bd"), by="geneID") %>% 
+  select( grpID, treeID, geneID) %>% 
+  left_join(treeTaxon,by="treeID")
+
+# map grpIDs to phylostrata Taxon
+grpTaxon <-
+  grpTreeTbl %>% 
+  group_by(grpID) %>% 
+  filter( taxonOrder==max(taxonOrder)) %>% 
+  ungroup() %>%
+  select( grpID, taxonOrder, taxonName) %>% 
+  unique()
+
+```
+
+Here is the number of trees per phylostrata (oldest node in the tree) for all trees that contain a brachypodium gene:
+```{r plotTaxonNumbers}
+
+treeTaxon %>%   
+  ggplot( aes(x=taxonName)) + geom_bar()+ coord_flip() + xlab("Phylostrata") + ylab("Number of trees")
+
+```
+
+
+```{r addPStoDEtbl}
+# Add phylostrata to DEtbl
+DEtblPS <- 
+  DEtbl %>%
+  left_join(grpTaxon, by="grpID") %>%
+  filter( !is.na(taxonOrder))
+```
+
+Here is the number brachypodium genes (only DE tested genes) per phylostrata:
+
+```{r plotTaxonNumbersBrDi}
+DEtblPS %>%   
+  filter(spc=="BrDi") %>% 
+  ggplot( aes(x=taxonName)) + geom_bar()+ coord_flip() + xlab("Phylostrata") + ylab("Number of genes in BrDi")
+```
+
+Interpretation: Very few genes in the BOP or Pooideae phylostrata which makes statistical power for enrichment in these very low.
+
+To test for enrichment of cold-responsive genes at the different phylostrata we use odds ratio (OR) as statistic. Odds ratio for phylostrata $p$ and differential expression category $d$ (dirDEG: "down", "up" or "not DE") is calculated as:
+
+$$ OR(p,d) = \frac{N_{p,d}/N_{p,\bar{d}}}{N_{\bar{p},d}/N_{\bar{p},\bar{d}}}$$
+
+where $N_{p,d}$ is the number of genes assigned to phylostrata $p$ with differential expression category $d$, and $N_{p,\bar{d}}$ is the number of genes assigned to phylostrata $p$ with differential expression category not equal $d$, etc...
+
+An odds ratio greater than 1 (log OR > 0) means that there is a higher chance of observing the given DE category in the given phylostrata.
+
+```{r calcOddsRatioPS,cache=T}
+  
+calcOR <- function(x){
+  x %>% 
+    add_count(responseType,spc) %>% dplyr::rename(N=n) %>% 
+    add_count(responseType,spc,dirDEG) %>% dplyr::rename(Nd=n) %>% 
+    add_count(responseType,spc,taxonOrder) %>% dplyr::rename(Np=n) %>% 
+    group_by(responseType,spc,dirDEG,taxonOrder) %>% 
+    # where: Npd = n(), NpD = Np-Npd, NPd = Nd-Npd, NPD=N-Np-Nd+Npd
+    summarise( Npd = n(), NpD = Np[1]-n(), NPd = Nd[1]-n(), NPD=N[1]-Np[1]-Nd[1]+n()) %>% 
+    mutate( OR=(Npd/NpD)/(NPd/NPD) )
+}
+
+# calc log odds
+ORtbl <- calcOR(DEtblPS)
+
+
+# bootstrap log odds
+ORtblBootStrap1000 <-
+  replicate(n = 1000,calcOR(DEtblPS %>% sample_n(size=nrow(DEtblPS),replace = T)),simplify = F) %>% 
+  bind_rows() 
+```
+
+
+```{r calcLogOddsPS,cache=T}
+calcLL <- function(x){
+  x %>% 
+    add_count(responseType,spc) %>% dplyr::rename(nAny=n) %>% 
+    add_count(responseType,spc,dirDEG) %>% dplyr::rename(nDirDEG=n) %>% 
+    group_by(responseType,spc,taxonOrder) %>% 
+    mutate( pTaxon=n()/nAny ) %>% 
+    group_by(dirDEG,responseType,spc,taxonOrder,pTaxon) %>% 
+    # estimated probability
+    summarise( p=n()/nDirDEG[1] ) %>% 
+    mutate(ll=log2(p/pTaxon))
+}
+
+# calc log odds
+llTbl <- calcLL(DEtblPS)
+
+# bootstrap log odds
+llTblBootStrap1000 <-
+  replicate(n = 1000,calcLL(DEtblPS %>% sample_n(size=nrow(x),replace = T)),simplify = F) %>% 
+  bind_rows() 
+```
+
+The following plot shows the log2 odds ratio, i.e. log2( proportion of DEGs in strata / proportion of tested genes of). The error-bars indicate 95% confince interval based on 1000 bootstraps.
+
+```{r plotPhylostrataLogOdds, fig.height=12}
+
+q95lower <- function(x){quantile(x,probs=0.025)}
+q95upper <- function(x){quantile(x,probs=0.975)}
+
+llTblBootStrap1000 %>% 
+  ggplot(aes(x=taxonOrder,y=ll,color=dirDEG)) +
+  stat_summary(geom="errorbar", fun.ymin=q95lower, fun.ymax=q95upper, width=0.1) +
+  # stat_summary(geom="point", fun.y=mean) + 
+  geom_point(data=llTbl)+geom_line(data=llTbl)+
+  facet_grid( spc ~ responseType) +
+  scale_x_continuous( breaks=seq_along(orderedTaxonsTblReduced$taxonName), 
+                      labels=orderedTaxonsTblReduced$taxonName) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylab("log2(odds)") + xlab("phylostrata")
+
+```
+
+Here is the same plot but combining all species:
+
+```{r calcLogOddsPSall,cache=T}
+  
+calcLLall <- function(x){
+  x %>% 
+    add_count(responseType) %>% dplyr::rename(nAny=n) %>% 
+    add_count(responseType,dirDEG) %>% dplyr::rename(nDirDEG=n) %>% 
+    group_by(responseType,taxonOrder) %>% 
+    mutate( pTaxon=n()/nAny ) %>% 
+    group_by(dirDEG,responseType,taxonOrder,pTaxon) %>% 
+    # estimated probability
+    summarise( p=n()/nDirDEG[1] ) %>% 
+    mutate(ll=log2(p/pTaxon))
+}
+
+# calc log odds
+llTblAll <- calcLLall(DEtblPS)
+
+# bootstrap log odds
+llTblBootStrap1000all <-
+  replicate(n = 1000,calcLLall(DEtblPS %>% sample_n(size=nrow(x),replace = T)),simplify = F) %>% 
+  bind_rows() 
+```
+
+
+```{r calcOddsRatioPSall,cache=T}
+  
+calcORall <- function(x){
+  x %>% 
+    add_count(responseType) %>% dplyr::rename(N=n) %>% 
+    add_count(responseType,dirDEG) %>% dplyr::rename(Nd=n) %>% 
+    add_count(responseType,taxonOrder) %>% dplyr::rename(Np=n) %>% 
+    group_by(responseType,dirDEG,taxonOrder) %>% 
+    # where: Npd = n(), NpD = Np-Npd, NPd = Nd-Npd, NPD=N-Np-Nd+Npd
+    summarise( Npd = n(), NpD = Np[1]-n(), NPd = Nd[1]-n(), NPD=N[1]-Np[1]-Nd[1]+n()) %>% 
+    mutate( OR=(Npd/NpD)/(NPd/NPD) )
+}
+
+# calc log odds
+ORtblAll <- calcORall(DEtblPS)
+
+
+# bootstrap log odds
+ORtblBootStrap1000all <-
+  replicate(n = 1000,calcORall(DEtblPS %>% sample_n(size=nrow(DEtblPS),replace = T)),simplify = F) %>% 
+  bind_rows() 
+
+# # alternative to bootstrapping:
+# 
+# # add fisher estimated
+# fisherResTbl <- function(Npd, NpD, NPd, NPD){
+#   fisher.test(matrix(nrow=2,c( Npd, NpD, NPd, NPD)),simulate.p.value = TRUE) %>% 
+#     with( tibble(p=p.value,fisherOR=estimate,CI95lower=conf.int[1],CI95upper=conf.int[2]))
+# }
+# 
+# 
+# ORtblAllfisher <- 
+#   ORtblAll %>% mutate(fisherRes = pmap(.l=list( Npd, NpD, NPd, NPD),fisherResTbl)) %>% unnest()
+# 
+# ORtblAllfisher %>% 
+#   ggplot(aes(x=taxonOrder,y=log2(OR),color=dirDEG)) +
+#   geom_point() + 
+#   geom_line() +
+#   geom_errorbar(mapping=aes(ymin=log2(CI95lower),ymax=log2(CI95upper)), width=0.2)+
+#   facet_grid( . ~ responseType) +
+#   scale_x_continuous( breaks=seq_along(orderedTaxonsTblReduced$taxonName), 
+#                       labels=orderedTaxonsTblReduced$taxonName) +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+#   xlab("phylostrata")
+
+```
+
+
+```{r plotPhylostrataLogOddsRatioAll}
+
+ORtblBootStrap1000all %>% 
+  ggplot(aes(x=taxonOrder,y=log2(OR),color=dirDEG)) +
+  stat_summary(geom="errorbar", fun.ymin=q95lower, fun.ymax=q95upper, width=0.1) +
+  # stat_summary(geom="point", fun.y=mean) + 
+  geom_point(data=ORtblAll)+geom_line(data=ORtblAll)+
+  facet_grid( . ~ responseType) +
+  scale_x_continuous( breaks=seq_along(orderedTaxonsTblReduced$taxonName), 
+                      labels=orderedTaxonsTblReduced$taxonName) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  xlab("phylostrata")
+
+```
+
+Interpretation: The Pooideae and BOP clade phylostrata has too much noise to make and conclusion, but for the rest it seems that cold-responsive genes tend to be underespresented among the most ancient genes. Interrestingly, up-regulated genes seems to be a bit older than the down-regulated genes
+
