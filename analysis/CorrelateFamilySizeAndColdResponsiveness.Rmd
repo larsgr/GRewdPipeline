@@ -19,7 +19,9 @@ source("~/GRewd/pipeline/R/orthoGrpTools.R")
 
 ## Aim of analysis
 
-We claim in the paper that genes important to cold acclimation tend to have more complex duplication history. The basis for this was that a large part of the Greenup genes (i.e. known cold responsive genes in barley) were not in the HCOGs because of complex gene tree topology (as inferred by manually inspecting each tree). The aim of this analysis is to statistically test if this is a general trend for all cold-response genes by correlating family size with cold response.
+We claim in the paper that genes important to cold acclimation tend to have more complex duplication history. The basis for this was that a large part of the Greenup genes (i.e. known cold responsive genes in barley) were not in the HCOGs because of complex gene tree topology (as inferred by manually inspecting each tree). The first aim of this analysis is to statistically test if this is a general trend for all cold-response genes by correlating family size with cold response.
+
+The second aim is to do a phylostratigraphic analysis of cold responsive genes.
 
 ## family size correlates with cold response
 
@@ -198,9 +200,9 @@ DEtbl %>%
 
 ### Split and filtered trees
 
-Part of the pipeline includes splitting large trees and apply "minimum" topology filtering the trees so that: 1) all the pooids form a single clan, and 2) the orthogroup includes at least one basal (StLa, NaSt, MeNu) and 1 "core" (HoVu, BrDi) denovo ortholog.
+Part of the pipeline includes splitting large trees and apply "minimum" topology filtering the trees so that: 1) all the pooids form a single clan, and 2) the orthogroup includes at least one basal (StLa, NaSt, MeNu) and 1 "core" (HoVu, BrDi) denovo ortholog. This splitting and filtering reduces the number of genes
 
-The following plots show how the filtering correlates cold-response. The second plot only includes the genes with typical mean gene expression.
+The following plots show how if filtering is bias towards certain cold-responses. The second plot only includes the genes with typical mean gene expression.
 ```{r plotPropFiltered}
 DEtbl %>% 
   left_join( separate(goodGrpsTbl,seqID, into=c("spc","geneID"),sep = "\\|") %>% dplyr::rename(grpID2=grpID),by=c("spc","geneID")) %>% 
@@ -210,8 +212,13 @@ DEtbl %>%
   stat_summary(geom="text", fun.data=my_stat_n, color="red", angle=90, vjust=-0.5) + 
   facet_grid( . ~ responseType) +
   scale_y_continuous(labels=percent) +
-  ylab("removed by minimum filter") + xlab("cold response")
+  ylab("removed by minimum filter") + xlab("cold response") + ggtitle("Filter bias")
   
+```
+
+
+```{r plotPropFiltered_withBasemeanFilter}
+
 DEtbl %>% 
   left_join( separate(goodGrpsTbl,seqID, into=c("spc","geneID"),sep = "\\|") %>% dplyr::rename(grpID2=grpID),by=c("spc","geneID")) %>% 
   filter( log2(1+baseMean) > 5, log2(1+baseMean) < 10) %>% 
@@ -221,12 +228,14 @@ DEtbl %>%
   stat_summary(geom="text", fun.data=my_stat_n, color="red", angle=90, vjust=-0.5) + 
   facet_grid( . ~ responseType) +
   scale_y_continuous(labels=percent) +
-  ylab("removed by minimum filter") + xlab("cold response") + ggtitle("5 < log2(1+baseMean)  < 10")
+  ylab("removed by minimum filter") + xlab("cold response") + ggtitle("Filter bias",subtitle = "5 < log2(1+baseMean)  < 10")
+
 ```
 
 Interpretation: cold-responsive genes tend to be removed by the filter more often. Interrestingly the short-term down-regulated genes show the opposite trend, i.e. they are more likely to pass the filter.
 
 Using the split trees we can focus on the family size within the pooids. This eliminates large ortholog groups that may be caused by orthoMCL failing to separate pre-poaceae duplications. The first figure calculates family size based on all five denovo and the two reference pooids, while the second uses only the two reference pooids.
+
 ```{r plotFilteredOGsize}
 DEtbl %>% 
   left_join( separate(goodGrpsTbl,seqID, into=c("spc","geneID"),sep = "\\|") %>% dplyr::rename(grpID2=grpID),by=c("spc","geneID")) %>% 
@@ -250,6 +259,7 @@ DEtbl %>%
   facet_grid( . ~ responseType) +
   ylab("family size (ref. pooids)") + xlab("cold response")
 ```
+
 Interpretation: The pattern of cold-responsive genes being from larger gene families is less clear now. However, the short-term down-regulated genes are significantly correlated with smaller family size.
 
 ### Proportion of 1:1 gene families
@@ -294,11 +304,11 @@ Gene families with a single ortholog in each species is indicative of an essenti
 
 Large gene families become large because they have a tendency to be duplicated and/or to retain the duplicates. Such gene families are less likely to be restrained by dosage and can therefore tolerate newly acquired expression patterns, such as response to cold, whether it is functional or not. Furthermore, the redundancy caused by having multiple copies allows for relaxed selection and therefore more chances to stumble upon new functions.
 
-## phylostratigraphic analysis
+## Phylostratigraphic analysis
 
-In phylostratigraphic analysis each gene is assigned to a phylostrata that indicates the age of the gene family. The phylostrata is defined by the earliest common ancestor that conatins an ortholog of the given gene. This then used to look for enrichment of certain gene classes (i.e. cold responsive) at the different phylostrata. 
+In phylostratigraphic analysis each gene is assigned to a phylostrata that indicates the age of the gene family. The phylostrata is defined by the earliest common ancestor that contains an ortholog of the given gene. This is then used to look for enrichment of certain gene classes (i.e. cold responsive) at the different phylostrata. 
 
-A common method to identify the phylostrata is to blastp against all possible sequences available, and assign the phylostrata based on the hit with the oldest MRCA. However, in this analysis I use the gene-trees downloaded from ensembl plants compara. The age of the oldest internal node in the gene-tree is used as the phylostrata for that tree. The ortholog groups is assigned to a gene-tree (and hence phylostrata) by mapping the matching Brachypodium geneIDs.
+A common method to identify the phylostrata is to blastp against all possible sequences available, and assign the phylostrata based on the hit with the oldest MRCA. However, in this analysis, gene-trees downloaded from ensembl plants compara is used. The age of the oldest internal node in the gene-tree is used as the phylostrata for that tree. Each ortholog group is then assigned to a gene-tree, and hence phylostrata, by mapping the matching Brachypodium geneIDs.
 
 ```{r loadTrees}
 # load ensembl trees
@@ -389,9 +399,6 @@ treeTaxon <-
   mutate( taxonOrder = reduceTaxonOrder[taxonOrder]) %>% 
   mutate( taxonName = factor(orderedTaxonsTblReduced$taxonName[taxonOrder], 
                              levels=orderedTaxonsTblReduced$taxonName))
-#   summarise( taxonOrder = max(taxonOrder)) %>%
-#   mutate( taxonName = factor(orderedTaxonsTbl$taxonName[taxonOrder], 
-#                              levels=orderedTaxonsTbl$taxonName))
 
 # map grpIDs to TreeIDs
 grpTreeTbl <- 
@@ -414,7 +421,9 @@ grpTaxon <-
 
 ```
 
-Here is the number of trees per phylostrata (oldest node in the tree) for all trees that contain a brachypodium gene:
+### Phylostrata count
+
+Number of trees per phylostrata for all trees that contain a brachypodium gene:
 ```{r plotTaxonNumbers}
 
 treeTaxon %>%   
@@ -431,7 +440,7 @@ DEtblPS <-
   filter( !is.na(taxonOrder))
 ```
 
-Here is the number brachypodium genes (only DE tested genes) per phylostrata:
+Number brachypodium genes (only DE tested genes) per phylostrata:
 
 ```{r plotTaxonNumbersBrDi}
 DEtblPS %>%   
@@ -441,127 +450,91 @@ DEtblPS %>%
 
 Interpretation: Very few genes in the BOP or Pooideae phylostrata which makes statistical power for enrichment in these very low.
 
-To test for enrichment of cold-responsive genes at the different phylostrata we use odds ratio (OR) as statistic. Odds ratio for phylostrata $p$ and differential expression category $d$ (dirDEG: "down", "up" or "not DE") is calculated as:
+### Odds ratio of DEGs per phylostrata
+
+To test for enrichment of cold-responsive genes at the different phylostrata we use odds ratio (OR) as statistic. Odds ratio for phylostrata $p$ and differential expression category $d$ ("down", "up" or "not DE") is calculated as:
 
 $$ OR(p,d) = \frac{N_{p,d}/N_{p,\bar{d}}}{N_{\bar{p},d}/N_{\bar{p},\bar{d}}}$$
 
 where $N_{p,d}$ is the number of genes assigned to phylostrata $p$ with differential expression category $d$, and $N_{p,\bar{d}}$ is the number of genes assigned to phylostrata $p$ with differential expression category not equal $d$, etc...
 
-An odds ratio greater than 1 (log OR > 0) means that there is a higher chance of observing the given DE category in the given phylostrata.
+An odds ratio greater than 1 (log OR > 0) means that there is a higher chance of observing the given DE category in the given phylostrata. Errorbars are 95% confidence interval generated by 1000 bootstraps.
 
 ```{r calcOddsRatioPS,cache=T}
-  
+
 calcOR <- function(x){
   x %>% 
-    add_count(responseType,spc) %>% dplyr::rename(N=n) %>% 
-    add_count(responseType,spc,dirDEG) %>% dplyr::rename(Nd=n) %>% 
-    add_count(responseType,spc,taxonOrder) %>% dplyr::rename(Np=n) %>% 
-    group_by(responseType,spc,dirDEG,taxonOrder) %>% 
-    # where: Npd = n(), NpD = Np-Npd, NPd = Nd-Npd, NPD=N-Np-Nd+Npd
+    mutate(N=n()) %>% 
+    add_count(dirDEG) %>% dplyr::rename(Nd=n) %>% 
+    add_count(taxonOrder) %>% dplyr::rename(Np=n) %>% 
+    group_by(dirDEG,taxonOrder) %>% 
     summarise( Npd = n(), NpD = Np[1]-n(), NPd = Nd[1]-n(), NPD=N[1]-Np[1]-Nd[1]+n()) %>% 
     mutate( OR=(Npd/NpD)/(NPd/NPD) )
 }
 
-# calc log odds
-ORtbl <- calcOR(DEtblPS)
+
+# calc log odds for each responseType and spc
+ORtbl <- 
+  DEtblPS %>% 
+  group_by(responseType,spc) %>% 
+  do( ORres = calcOR(.)) %>% 
+  unnest()
 
 
 # bootstrap log odds
 ORtblBootStrap1000 <-
-  replicate(n = 1000,calcOR(DEtblPS %>% sample_n(size=nrow(DEtblPS),replace = T)),simplify = F) %>% 
-  bind_rows() 
+  replicate(n = 1000, simplify = F,{
+    DEtblPS %>% 
+      sample_frac(replace = T) %>% 
+      group_by(responseType,spc) %>% 
+      do( ORres = calcOR(.)) %>% 
+      unnest()
+  }) %>% 
+  bind_rows()
 ```
 
-
-```{r calcLogOddsPS,cache=T}
-calcLL <- function(x){
-  x %>% 
-    add_count(responseType,spc) %>% dplyr::rename(nAny=n) %>% 
-    add_count(responseType,spc,dirDEG) %>% dplyr::rename(nDirDEG=n) %>% 
-    group_by(responseType,spc,taxonOrder) %>% 
-    mutate( pTaxon=n()/nAny ) %>% 
-    group_by(dirDEG,responseType,spc,taxonOrder,pTaxon) %>% 
-    # estimated probability
-    summarise( p=n()/nDirDEG[1] ) %>% 
-    mutate(ll=log2(p/pTaxon))
-}
-
-# calc log odds
-llTbl <- calcLL(DEtblPS)
-
-# bootstrap log odds
-llTblBootStrap1000 <-
-  replicate(n = 1000,calcLL(DEtblPS %>% sample_n(size=nrow(x),replace = T)),simplify = F) %>% 
-  bind_rows() 
-```
-
-The following plot shows the log2 odds ratio, i.e. log2( proportion of DEGs in strata / proportion of tested genes of). The error-bars indicate 95% confince interval based on 1000 bootstraps.
-
-```{r plotPhylostrataLogOdds, fig.height=12}
+```{r plotPhylostrataLogOddsRatio, fig.height=12}
 
 q95lower <- function(x){quantile(x,probs=0.025)}
 q95upper <- function(x){quantile(x,probs=0.975)}
 
-llTblBootStrap1000 %>% 
-  ggplot(aes(x=taxonOrder,y=ll,color=dirDEG)) +
-  stat_summary(geom="errorbar", fun.ymin=q95lower, fun.ymax=q95upper, width=0.1) +
-  # stat_summary(geom="point", fun.y=mean) + 
-  geom_point(data=llTbl)+geom_line(data=llTbl)+
+ORtblBootStrap1000 %>% 
+  ggplot(aes(x=taxonOrder,y=log2(OR),color=dirDEG)) +
+  stat_summary(geom="errorbar", fun.ymin=q95lower, fun.ymax=q95upper, width=0.2) +
+  geom_point(data=ORtbl)+geom_line(data=ORtbl)+
   facet_grid( spc ~ responseType) +
   scale_x_continuous( breaks=seq_along(orderedTaxonsTblReduced$taxonName), 
                       labels=orderedTaxonsTblReduced$taxonName) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  ylab("log2(odds)") + xlab("phylostrata")
+  coord_cartesian(ylim=c(-1.5,1.5)) +
+  xlab("phylostrata")
 
 ```
 
 Here is the same plot but combining all species:
 
-```{r calcLogOddsPSall,cache=T}
-  
-calcLLall <- function(x){
-  x %>% 
-    add_count(responseType) %>% dplyr::rename(nAny=n) %>% 
-    add_count(responseType,dirDEG) %>% dplyr::rename(nDirDEG=n) %>% 
-    group_by(responseType,taxonOrder) %>% 
-    mutate( pTaxon=n()/nAny ) %>% 
-    group_by(dirDEG,responseType,taxonOrder,pTaxon) %>% 
-    # estimated probability
-    summarise( p=n()/nDirDEG[1] ) %>% 
-    mutate(ll=log2(p/pTaxon))
-}
-
-# calc log odds
-llTblAll <- calcLLall(DEtblPS)
-
-# bootstrap log odds
-llTblBootStrap1000all <-
-  replicate(n = 1000,calcLLall(DEtblPS %>% sample_n(size=nrow(x),replace = T)),simplify = F) %>% 
-  bind_rows() 
-```
-
 
 ```{r calcOddsRatioPSall,cache=T}
   
-calcORall <- function(x){
-  x %>% 
-    add_count(responseType) %>% dplyr::rename(N=n) %>% 
-    add_count(responseType,dirDEG) %>% dplyr::rename(Nd=n) %>% 
-    add_count(responseType,taxonOrder) %>% dplyr::rename(Np=n) %>% 
-    group_by(responseType,dirDEG,taxonOrder) %>% 
-    # where: Npd = n(), NpD = Np-Npd, NPd = Nd-Npd, NPD=N-Np-Nd+Npd
-    summarise( Npd = n(), NpD = Np[1]-n(), NPd = Nd[1]-n(), NPD=N[1]-Np[1]-Nd[1]+n()) %>% 
-    mutate( OR=(Npd/NpD)/(NPd/NPD) )
-}
 
-# calc log odds
-ORtblAll <- calcORall(DEtblPS)
+# calc log odds for each responseType
+ORtblAll <- 
+  DEtblPS %>% 
+  group_by(responseType) %>% 
+  do( ORres = calcOR(.)) %>% 
+  unnest()
 
 
 # bootstrap log odds
 ORtblBootStrap1000all <-
-  replicate(n = 1000,calcORall(DEtblPS %>% sample_n(size=nrow(DEtblPS),replace = T)),simplify = F) %>% 
-  bind_rows() 
+  replicate(n = 1000, simplify = F,{
+    DEtblPS %>% 
+      sample_frac(replace = T) %>% 
+      group_by(responseType) %>% 
+      do( ORres = calcOR(.)) %>% 
+      unnest()
+  }) %>% 
+  bind_rows()
 
 # # alternative to bootstrapping:
 # 
@@ -604,5 +577,5 @@ ORtblBootStrap1000all %>%
 
 ```
 
-Interpretation: The Pooideae and BOP clade phylostrata has too much noise to make and conclusion, but for the rest it seems that cold-responsive genes tend to be underespresented among the most ancient genes. Interrestingly, up-regulated genes seems to be a bit older than the down-regulated genes
+Interpretation: The Pooideae and BOP clade phylostrata has too much noise (too few observations) to make and conclusion, but for the rest the general trend is that cold-responsive genes tend to be underespresented among the most ancient genes, i.e. the Eukaryota phylostrata. Interrestingly, in general up-regulated genes seems to be a bit older than the down-regulated genes, however, this varies between species (HoVu shows opposite trend).
 
